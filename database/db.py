@@ -183,11 +183,10 @@ class DbConnection:
                 Dict[str, int]: Словарь артикулов с остатками на складах.
         """
         query = text("""
-            SELECT ivc.main_vendor_code, SUM(svf.total_quantity) as quantity
-            FROM stocks_view_final svf
-            LEFT JOIN ip_vendor_code ivc ON ivc.vendor_code = svf.vendor_code
-            WHERE svf.date = :from_date AND svf.marketplace <> 'On the way'
-            GROUP BY ivc.main_vendor_code
+            SELECT vendor_code, SUM(total_quantity) as quantity
+            FROM stocks_view_final 
+            WHERE date = :from_date
+            GROUP BY vendor_code
         """)
         result = self.session.execute(query, {"from_date": from_date}).fetchall()
         return {row[0]: int(row[1]) for row in result}
