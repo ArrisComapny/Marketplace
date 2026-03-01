@@ -73,7 +73,7 @@ def add_fbs_stocks(db_conn: DbConnection) -> None:
         name = name.strip()
         match = pattern.search(name)
 
-        if match:
+        if match and 'заказ' not in name.lower():
             try:
                 date_obj = datetime.strptime(match.group(), "%d.%m.%Y").date()
                 dates_sheet_names.append((date_obj, name))  # сохраняем и дату и имя
@@ -108,7 +108,7 @@ def add_fbs_stocks(db_conn: DbConnection) -> None:
             continue
 
         vendor_code = row[1].strip().lower()
-        for suffix in ['/m','/м','/s','/l','/xs','/xl','/2xl']:  # Удаляем  размер
+        for suffix in ['/m','/м','/s','/l','/xs','/xl','/2xl']:  # Удаляем размер
             if vendor_code.endswith(suffix):
                 vendor_code = vendor_code.removesuffix(suffix)
                 break
