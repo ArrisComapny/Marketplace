@@ -9,7 +9,6 @@ from sqlalchemy import create_engine, text
 from oauth2client.service_account import ServiceAccountCredentials
 
 from config import DB_ARRIS_MASTER_URL, SPREADSHEET_ID
-from google_sheet_ya_adv import client
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas")
 
