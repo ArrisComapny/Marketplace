@@ -149,9 +149,9 @@ async def main_func_oz(retries: int = 6) -> None:
                                             client_id=client.client_id,
                                             api_key=client.api_key,
                                             date_now=date_now)
-                    date_now -= timedelta(days=1)
                 except ClientError as e:
                     logger.error(f'{e}')
+            date_now -= timedelta(days=1)
     except OperationalError:
         logger.error(f'Не доступна база данных. Осталось попыток подключения: {retries - 1}')
         if retries > 0:
