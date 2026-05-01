@@ -103,6 +103,8 @@ async def add_oz_main_entry(db_conn: OzDbConnection, client_id: str, api_key: st
                     quantities = -len([item for item in operation.items if item.sku == product.sku])
                     if commission:
                         commission = round((commission / product.quantity) * quantities, 2)
+                    if bonus:
+                        bonus = round((bonus / product.quantity) * quantities, 2)
 
                 if sku not in list_sku:
                     answer_info = await api_user.get_product_info_discounted(discounted_skus=[sku])
@@ -141,18 +143,16 @@ async def main_func_oz(retries: int = 6) -> None:
         clients = db_conn.get_clients(marketplace="Ozon")
 
         date_now = datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        date_now = datetime.now(tz=timezone.utc).replace(month=3, day=9, hour=0, minute=0, second=0, microsecond=0)
-        while date_now.year != 2025:
-            for client in clients:
-                try:
-                    logger.info(f"Добавление в базу данных компании '{client.name_company}'")
-                    await add_oz_main_entry(db_conn=db_conn,
-                                            client_id=client.client_id,
-                                            api_key=client.api_key,
-                                            date_now=date_now)
-                except ClientError as e:
-                    logger.error(f'{e}')
-            date_now -= timedelta(days=1)
+
+        for client in clients:
+            try:
+                logger.info(f"Добавление в базу данных компании '{client.name_company}'")
+                await add_oz_main_entry(db_conn=db_conn,
+                                        client_id=client.client_id,
+                                        api_key=client.api_key,
+                                        date_now=date_now)
+            except ClientError as e:
+                logger.error(f'{e}')
     except OperationalError:
         logger.error(f'Не доступна база данных. Осталось попыток подключения: {retries - 1}')
         if retries > 0:
