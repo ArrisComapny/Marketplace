@@ -18,6 +18,7 @@ class OzMain(Base):
     sale = Column(Numeric(precision=12, scale=2), nullable=False)
     quantities = Column(Integer, nullable=False)
     commission = Column(Numeric(precision=12, scale=2), nullable=False)
+    bonus = Column(Numeric(precision=12, scale=2), nullable=True)
 
     __table_args__ = (
         UniqueConstraint('type_of_transaction', 'posting_number', 'sku', name='oz_main_table_unique'),

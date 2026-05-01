@@ -75,13 +75,15 @@ class OzDbConnection(DbConnection):
                 sku=row.sku,
                 sale=row.sale,
                 quantities=row.quantities,
-                commission=row.commission
+                commission=row.commission,
+                bonus=row.bonus
             ).on_conflict_do_update(
                 index_elements=['type_of_transaction', 'posting_number', 'sku'],
                 set_={'accrual_date': row.accrual_date,
                       'sale': row.sale,
                       'quantities': row.quantities,
-                      'commission': row.commission}
+                      'commission': row.commission,
+                      'bonus': row.bonus}
             )
             self.session.execute(stmt)
         self.session.commit()
