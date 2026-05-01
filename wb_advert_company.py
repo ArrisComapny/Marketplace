@@ -295,9 +295,6 @@ async def main_wb_advert(retries: int = 6) -> None:
                 logger.error(f'{e}')
 
             try:
-                if client.name_company == 'UniStellar':
-                    logger.error(f"Разобраться почему не собирается")
-                    continue
                 logger.info(f"Статистика карточек товара {client.name_company} за {from_date.date().isoformat()}")
                 await get_statistic_card_product(db_conn=db_conn,
                                                  client_id=client.client_id,
