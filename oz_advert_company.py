@@ -402,10 +402,13 @@ async def add_statistic_adverts(db_conn: OzDbConnection, client_id: str, perform
 
     # Запрос статистики РК по 10 компаний за цикл
     for ids in [adverts_ids[i:i + 10] for i in range(0, len(adverts_ids), 10)]:
-        answer_stat = await api_user.get_client_statistics_json(campaigns=ids,
-                                                                date_from=from_date.isoformat(),
-                                                                date_to=from_date.isoformat(),
-                                                                group_by='DATE')
+        try:
+            answer_stat = await api_user.get_client_statistics_json(campaigns=ids,
+                                                                    date_from=from_date.isoformat(),
+                                                                    date_to=from_date.isoformat(),
+                                                                    group_by='DATE')
+        except ClientError:
+            continue
         uuid = answer_stat.UUID  # Получение UUID отчёта
 
         # Проверка готовности отчёта
