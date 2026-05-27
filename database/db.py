@@ -93,18 +93,25 @@ class DbConnection:
         return float(result[0]) if result else None
 
     @retry_on_exception()
-    def get_orders(self, from_date: datetime.date) -> list[DataOrder]:
-        """
-            Получает данные из orders_from_card_stat.
-
-            Args:
-                from_date (datetime.date): Дата за которую нужна статиситка.
-            Returns:
-                List[DataOrder]: Список данных по заказам.
-        """
+    def get_orders(self, from_date: datetime.date, to_date: datetime.date | None = None) -> list[DataOrder]:
         clients = {client.client_id: client for client in self.get_clients()}
-        query = text("SELECT client_id, vendor_code, orders_count FROM orders_from_card_stat WHERE date = :from_date")
-        result = self.session.execute(query, {'from_date': from_date.isoformat()}).fetchall()
+        if to_date is None:
+            query = text("""
+                SELECT client_id, vendor_code, orders_count
+                FROM orders_from_card_stat
+                WHERE date = :from_date
+            """)
+            params = {'from_date': from_date.isoformat()}
+        else:
+            query = text("""
+                SELECT client_id, vendor_code, SUM(orders_count) AS orders_count
+                FROM orders_from_card_stat
+                WHERE date BETWEEN :from_date AND :to_date
+                GROUP BY client_id, vendor_code
+            """)
+            params = {'from_date': from_date.isoformat(), 'to_date': to_date.isoformat()}
+
+        result = self.session.execute(query, params).fetchall()
         return [DataOrder(client=clients[row[0]], vendor_code=row[1], orders_count=row[2]) for row in result]
 
     @retry_on_exception()
@@ -135,6 +142,16 @@ class DbConnection:
         query = text("SELECT * FROM vendor_code")
         result = self.session.execute(query).fetchall()
         return [row[0] for row in result]
+
+    @retry_on_exception()
+    def get_vendors_map(self) -> dict[str, tuple[str, str]]:
+        query = text("""
+        SELECT vendor_code, main_vendor_code, type_of_vendor_code 
+        FROM ip_vendor_code
+        WHERE "group" not in ('new', 'other_trash')
+        """)
+        result = self.session.execute(query).fetchall()
+        return {row[0]: (row[1], row[2]) for row in result}
 
     @retry_on_exception()
     def get_plan_sale(self) -> list[DataPlanSale]:
@@ -177,6 +194,25 @@ class DbConnection:
         return result
 
     @retry_on_exception()
+    def get_cost_price(self, on_date: datetime.date) -> dict[str, float]:
+        """
+            Возвращает {vendor_code (lower): cost_per_unit} за месяц/год указанной даты.
+
+            Args:
+                on_date (datetime.date): Дата, по которой берётся месяц/год.
+
+            Returns:
+                Dict[str, float]: Себестоимость за единицу по артикулу.
+        """
+        query = text("""
+            SELECT lower(vendor_code) AS vendor_code, cost
+            FROM cost_price
+            WHERE month_date = :m AND year_date = :y
+        """)
+        result = self.session.execute(query, {"m": on_date.month, "y": on_date.year}).fetchall()
+        return {row[0]: float(row[1]) for row in result}
+
+    @retry_on_exception()
     def get_stocks(self, from_date: datetime.date) -> dict[str, int]:
         """
             Получает словарь артикулов с остатками товара за дату.
@@ -189,12 +225,184 @@ class DbConnection:
         """
         query = text("""
             SELECT vendor_code, SUM(total_quantity) as quantity
-            FROM stocks_view_final 
+            FROM stocks_view_final
             WHERE date = :from_date
             GROUP BY vendor_code
         """)
         result = self.session.execute(query, {"from_date": from_date}).fetchall()
         return {row[0]: int(row[1]) for row in result}
+
+    @retry_on_exception()
+    def get_stocks_detail(self, from_date: datetime.date) -> list[DataStock]:
+        """
+            Получает остатки на складах за дату.
+
+            FBS-стоки агрегируются под client = 'FBS' (без разделения по продавцу).
+            FBO-стоки агрегируются по client = client_id (магазин).
+            Строки с marketplace = 'On the way' игнорируются.
+
+            Args:
+                from_date (datetime.date): Дата за которую нужна информация.
+
+            Returns:
+                List[DataStock]: Список остатков с полями client, vendor_code, quantity.
+        """
+        query = text("""
+            SELECT CASE WHEN marketplace = 'FBS' THEN 'FBS' ELSE client_id END AS client,
+                   vendor_code,
+                   SUM(quantity) AS quantity
+            FROM stocks_view_final
+            WHERE date = :from_date
+              AND marketplace <> 'On the way'
+            GROUP BY CASE WHEN marketplace = 'FBS' THEN 'FBS' ELSE client_id END, vendor_code
+        """)
+        result = self.session.execute(query, {"from_date": from_date}).fetchall()
+        return [DataStock(client=row[0], vendor_code=row[1], quantity=int(row[2])) for row in result]
+
+    @retry_on_exception()
+    def get_profit(self, from_date: datetime.date, to_date: datetime.date) -> list[DataProfit]:
+        """
+            Возвращает компоненты прибыли по (marketplace, client_id, vendor_code) за период.
+
+            profit = sale - cost - commission - acquiring - logistics - storage
+                     - advertising - other - tac
+
+            Знаковая логика по МП:
+              - WB: commission_raw из main включает acquiring; на выход кладём net
+                    (commission = commission_raw - acquiring), acquiring отдельно.
+              - OZ: commission и services хранятся отрицательными удержаниями — ABS.
+                    acquiring берём из services (type 'acq').
+              - YA: commission и acquiring сидят в services (type 'comm'/'acq').
+        """
+        params = {"f": from_date, "t": to_date}
+
+        # Категоризация type_name в services_final (приведено к нижнему регистру в SQL).
+        category_types = {
+            'WB': {
+                'logistics':   ['log'],
+                'storage':     ['storage'],
+                'advertising': ['adv_stat'],
+                'other':       ['other_pin'],
+            },
+            'OZON': {
+                'acquiring':   ['acq'],
+                'logistics':   ['log', 'log_return', 'log_other', 'log_lastmile', 'log_rr'],
+                'storage':     ['storage', 'storage_r'],
+                'advertising': ['adv_click', 'adv_stat', 'adv_rev', 'adv_bs'],
+                'other':       ['other_tc', 'other_sub', 'other_fbo',
+                                'other_uti2', 'new', 'other', 'other_co'],
+            },
+            'YANDEX': {
+                'commission':  ['comm'],
+                'acquiring':   ['acq'],
+                'logistics':   ['log'],
+                'storage':     ['stor'],
+                'advertising': ['avg'],
+            },
+        }
+
+        # FIELDS — порядок полей агрегата
+        FIELDS = ('sale', 'cost', 'commission', 'acquiring',
+                  'logistics', 'storage', 'advertising', 'other', 'tac',
+                  'quantities')
+
+        # (mp, client_id, vendor_code) -> {field: value}
+        agg: dict[tuple[str, str, str], dict[str, float]] = {}
+
+        def slot(mp: str, cid: str, vc: str) -> dict[str, float]:
+            return agg.setdefault((mp, cid, vc), {k: 0.0 for k in FIELDS})
+
+        # --- main_table per МП ---
+        # WB: commission_raw и acquiring отдельно (acquiring как самостоятельный расход,
+        # commission показываем уже netto = raw - acquiring).
+        for cid, vc, sale, cost, comm_raw, acq, tac, qty in self.session.execute(text("""
+            SELECT client_id, lower(vendor_code),
+                   SUM(sale), SUM(cost), SUM(commission), SUM(acquiring),
+                   SUM("TaC"), SUM(quantities)
+            FROM wb_main_table_final2
+            WHERE accrual_date BETWEEN :f AND :t
+            GROUP BY client_id, lower(vendor_code)
+        """), params).fetchall():
+            s = slot('WB', cid, vc)
+            s['sale'] += float(sale or 0)
+            s['cost'] += float(cost or 0)
+            s['acquiring'] += float(acq or 0)
+            s['commission'] += float(comm_raw or 0) - float(acq or 0)
+            s['tac'] += float(tac or 0)
+            s['quantities'] += float(qty or 0)
+
+        # OZ: commission хранится отрицательно → ABS.
+        for cid, vc, sale, cost, comm, tac, qty in self.session.execute(text("""
+            SELECT client_id, lower(vendor_code),
+                   SUM(sale), SUM(cost), SUM(ABS(commission)), SUM("TaC"), SUM(quantities)
+            FROM oz_main_table_view
+            WHERE accrual_date BETWEEN :f AND :t
+            GROUP BY client_id, lower(vendor_code)
+        """), params).fetchall():
+            s = slot('OZON', cid, vc)
+            s['sale'] += float(sale or 0)
+            s['cost'] += float(cost or 0)
+            s['commission'] += float(comm or 0)
+            s['tac'] += float(tac or 0)
+            s['quantities'] += float(qty or 0)
+
+        # YA: комиссии нет в main; добавим из services ниже.
+        for cid, vc, sale, cost, tac, qty in self.session.execute(text("""
+            SELECT client_id, lower(vendor_code),
+                   SUM(sale), SUM(cost), SUM("TaC"), SUM(quantities)
+            FROM ya_main_table_view
+            WHERE accrual_date BETWEEN :f AND :t
+            GROUP BY client_id, lower(vendor_code)
+        """), params).fetchall():
+            s = slot('YANDEX', cid, vc)
+            s['sale'] += float(sale or 0)
+            s['cost'] += float(cost or 0)
+            s['tac'] += float(tac or 0)
+            s['quantities'] += float(qty or 0)
+
+        # --- services_final per МП — раскладываем по категориям через CASE-WHEN ---
+        serv_tables = {
+            'WB': ('wb_services_final', 'SUM({c})'),
+            'OZON': ('oz_services_final', 'SUM(ABS({c}))'),  # удержания отрицательные → ABS
+            'YANDEX': ('ya_services_final', 'SUM({c})'),
+        }
+        for mp, (table, agg_tmpl) in serv_tables.items():
+            cats = category_types[mp]
+            select_parts = []
+            for cat, types in cats.items():
+                in_list = ",".join(f"'{t}'" for t in types)
+                inner = f"CASE WHEN lower(type_name) IN ({in_list}) THEN cost ELSE 0 END"
+                select_parts.append(f"{agg_tmpl.format(c=inner)} AS {cat}")
+
+            sql = f"""
+                SELECT client_id, lower(vendor_code), {', '.join(select_parts)}
+                FROM {table}
+                WHERE date BETWEEN :f AND :t
+                GROUP BY client_id, lower(vendor_code)
+            """
+            rows = self.session.execute(text(sql), params).fetchall()
+            cat_names = list(cats.keys())
+            for row in rows:
+                cid, vc = row[0], row[1]
+                s = slot(mp, cid, vc)
+                for i, cat in enumerate(cat_names, start=2):
+                    s[cat] += float(row[i] or 0)
+
+        return [
+            DataProfit(
+                marketplace=mp, client_id=cid, vendor_code=vc,
+                sale=s['sale'], cost=s['cost'],
+                commission=s['commission'], acquiring=s['acquiring'],
+                logistics=s['logistics'], storage=s['storage'],
+                advertising=s['advertising'], other=s['other'],
+                tac=s['tac'],
+                quantities=s['quantities'],
+                profit=(s['sale'] - s['cost'] - s['commission'] - s['acquiring']
+                        - s['logistics'] - s['storage'] - s['advertising']
+                        - s['other'] - s['tac']),
+            )
+            for (mp, cid, vc), s in agg.items()
+        ]
 
     @retry_on_exception()
     def get_plan(self, from_date: datetime.date) -> dict[str, int]:

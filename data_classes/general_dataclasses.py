@@ -45,6 +45,31 @@ class DataOrder:
 
 
 @dataclass
+class DataStock:
+    client: str
+    vendor_code: str
+    quantity: int
+
+
+@dataclass
+class DataProfit:
+    marketplace: str
+    client_id: str
+    vendor_code: str
+    sale: float
+    cost: float
+    commission: float
+    acquiring: float
+    logistics: float
+    storage: float
+    advertising: float
+    other: float
+    tac: float
+    quantities: float
+    profit: float
+
+
+@dataclass
 class DataRate:
     date: datetime.date
     currency: str
