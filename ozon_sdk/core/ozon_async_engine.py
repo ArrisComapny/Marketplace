@@ -67,10 +67,13 @@ class OzonAsyncEngine:
                             raise ClientError
                         if response.status == 400:
                             r = await response.json()
+                            # logger.error(f"400 от {url}: {r}")
                             if r.get('code', 0) == 3:
                                 raise ClientError(r.get('message', ''))
+                            if 'forbidden' in r.get('error', ''):
+                                raise ClientError(r.get('error', ''))
                         if response.status != 200:
-                            logger.info(f"Получен ответ от {url} ({response.status})")
+                            logger.info(f"Получен ответ от{url} ({response.status})")
                             logger.error(f"Попытка повторного запроса. Осталось попыток: {retry - 1}")
                             await asyncio.sleep(120)
                             retry -= 1
