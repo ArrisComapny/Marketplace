@@ -102,14 +102,14 @@ def reorder_sheets(spreadsheet: gspread.Spreadsheet) -> None:
     desired_order.sort(reverse=True, key=lambda x: (x.split(" копия")[0], "копия" not in x))
     desired_order = [SAMPLE, WEEK] + desired_order
 
-    requests = []
+    all_requests = []
     for index, sheet_name in enumerate(desired_order):
         sheet_id = sheets.get(sheet_name)
         if sheet_id is not None:
-            requests.append({"updateSheetProperties": {"properties": {"sheetId": sheet_id, "index": index},
+            all_requests.append({"updateSheetProperties": {"properties": {"sheetId": sheet_id, "index": index},
                                                        "fields": "index"}})
     if requests:
-        spreadsheet.batch_update({"requests": requests})
+        spreadsheet.batch_update({"requests": all_requests})
 
 
 def initialize_google_sheet() -> gspread.Spreadsheet:
@@ -818,7 +818,7 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                                                        "properties": {"hiddenByUser": True},
                                                        "fields": "hiddenByUser"}})
 
-    spreadsheet.batch_update({"requests": requests})
+    spreadsheet.batch_update({"requests": all_requests})
 
 
 def update_week_sheet(db_conn: DbConnection):
