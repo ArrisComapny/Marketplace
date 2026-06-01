@@ -262,12 +262,14 @@ class OzonApi:
         answer: AnalyticsDataResponse = await self._analytics_data_api.post(request)
         return answer
 
-    async def get_posting_fbo_list(self, since: str, to: str, order_by: str = 'asc', status: str = '',
-                                   limit: int = 1000, offset: int = 0, translit: bool = False,
-                                   analytics_data: bool = False,
-                                   financial_data: bool = False) -> PostingFBOListResponse:
+    async def get_posting_fbo_list(self, since: str, to: str, sort_dir: str = 'asc',
+                                   status: list[str] = None, cursor: str = "",
+                                   limit: int = 100, translit: bool = False,
+                                   posting_number: list[str] = None, order_number: list[str] = None,
+                                   analytics_data: bool = False, financial_data: bool = False,
+                                   legal_info: bool = False) -> PostingFBOListResponse:
         """
-            Получить информацию по отправлениям схемы FBO.
+            Получить информацию по отправлениям схемы FBO. Метод /v3/posting/fbo/list.
 
             Направление сортировки:
                 asc — по возрастанию, \n
@@ -282,35 +284,44 @@ class OzonApi:
             Args:
                 since (str): Начало периода в формате YYYY-MM-DD.
                 to (str): Конец периода в формате YYYY-MM-DD.
-                order_by (str, optional): Направление сортировки.
-                status (str, optional): Статус отправления.
-                limit (int, optional): Количество значений в ответе. Минимум — 1, максимум — 1000.
-                offset (int, optional): Количество элементов, которое будет пропущено в ответе.
+                sort_dir (str, optional): Направление сортировки.
+                status (list[str], optional): Список статусов отправлений.
+                cursor (str, optional): Указатель для выборки следующих данных. Для первой страницы — "".
+                limit (int, optional): Количество значений в ответе. Минимум — 1, максимум — 100.
                 translit (bool, optional): Выполнить транслитерацию возвращаемых значений.
+                posting_number (list[str], optional): Фильтр по номерам отправлений.
+                order_number (list[str], optional): Фильтр по номерам заказов.
                 analytics_data (bool, optional): Добавить в ответ данные аналитики.
                 financial_data (bool, optional): Добавить в ответ финансовые данные.
+                legal_info (bool, optional): Добавить в ответ данные о юридическом лице покупателя.
         """
-        request = PostingFBOListRequest(order_by=order_by,
+        request = PostingFBOListRequest(cursor=cursor,
                                         filter=PostingFBOListFilter(since=since,
-                                                                    status=status,
-                                                                    to=to),
+                                                                    to=to,
+                                                                    status=status or [],
+                                                                    posting_number=posting_number or [],
+                                                                    order_number=order_number or []),
                                         limit=limit,
-                                        offset=offset,
+                                        sort_dir=sort_dir,
                                         translit=translit,
                                         with_field=PostingFBOListWith(analytics_data=analytics_data,
-                                                                      financial_data=financial_data))
+                                                                      financial_data=financial_data,
+                                                                      legal_info=legal_info))
         answer: PostingFBOListResponse = await self._posting_fbo_list_api.post(request)
         return answer
 
-    async def get_posting_fbs_list(self, since: str, to: str, order_by: str = 'asc',
-                                   delivery_method_id: list[int] = None, order_id: int = None,
-                                   provider_id: list[int] = None, status: str = '', warehouse_id: list[int] = None,
+    async def get_posting_fbs_list(self, since: str, to: str, sort_dir: str = 'asc',
+                                   statuses: list[str] = None, order_id: int = None,
+                                   order_numbers: list[str] = None, delivery_method_ids: list[int] = None,
+                                   provider_ids: list[int] = None, warehouse_ids: list[int] = None,
+                                   is_blr_traceable: bool = None,
                                    from_last_changed_status_date: str = None,
-                                   to_last_changed_status_date: str = None, limit: int = 1000, offset: int = 0,
+                                   to_last_changed_status_date: str = None, cursor: str = "", limit: int = 100,
                                    analytics_data: bool = False, barcodes: bool = False,
-                                   financial_data: bool = False, translit: bool = False) -> PostingFBSListResponse:
+                                   financial_data: bool = False, legal_info: bool = False,
+                                   translit: bool = False) -> PostingFBSListResponse:
         """
-            Получить информацию по отправлениям схемы FBO.
+            Получить информацию по отправлениям схемы FBS. Метод /v4/posting/fbs/list.
 
             Направление сортировки:
                 asc — по возрастанию, \n
@@ -325,40 +336,46 @@ class OzonApi:
             Args:
                 since (str): Начало периода в формате YYYY-MM-DD.
                 to (str): Конец периода в формате YYYY-MM-DD.
-                order_by (str, optional): Направление сортировки.
-                delivery_method_id (list[int], optional): Идентификатор способа доставки.
+                sort_dir (str, optional): Направление сортировки.
+                statuses (list[str], optional): Список статусов отправлений.
                 order_id (int, optional): Идентификатор заказа.
-                provider_id (list[int], optional): Идентификатор службы доставки.
-                status (str, optional): Статус отправления.
-                warehouse_id (list[int], optional): Идентификатор склада.
-                from_last_changed_status_date (str, optional): Дата начала периода изменения статуса
-                                                               в формате YYYY-MM-DD.
-                to_last_changed_status_date (str, optional): Дата окончания периода изменения статуса
-                                                             в формате YYYY-MM-DD.
-                limit (int, optional): Количество значений в ответе. Минимум — 1, максимум — 1000.
-                offset (int, optional): Количество элементов, которое будет пропущено в ответе.
+                order_numbers (list[str], optional): Список номеров заказов.
+                delivery_method_ids (list[int], optional): Идентификаторы способов доставки.
+                provider_ids (list[int], optional): Идентификаторы служб доставки.
+                warehouse_ids (list[int], optional): Идентификаторы складов.
+                is_blr_traceable (bool, optional): Фильтр по прослеживаемым товарам (Беларусь).
+                from_last_changed_status_date (str, optional): Дата начала периода изменения статуса.
+                to_last_changed_status_date (str, optional): Дата окончания периода изменения статуса.
+                cursor (str, optional): Указатель для выборки следующих данных. Для первой страницы — "".
+                limit (int, optional): Количество значений в ответе. Минимум — 1, максимум — 100.
                 analytics_data (bool, optional): Добавить в ответ данные аналитики.
                 barcodes (bool, optional): Добавить в ответ штрих-коды отправления.
                 financial_data (bool, optional): Добавить в ответ финансовые данные.
+                legal_info (bool, optional): Добавить в ответ данные о юридическом лице покупателя.
                 translit (bool, optional): Выполнить транслитерацию возвращаемых значений.
         """
+        last_changed = None
+        if from_last_changed_status_date is not None or to_last_changed_status_date is not None:
+            last_changed = PostingFBSListFilterLastChangedStatusDate(from_field=from_last_changed_status_date,
+                                                                     to=to_last_changed_status_date)
         request = PostingFBSListRequest(
-            order_by=order_by,
-            filter=PostingFBSListFilter(delivery_method_id=delivery_method_id or [],
-                                        order_id=order_id,
-                                        provider_id=provider_id or [],
-                                        since=since,
-                                        status=status,
-                                        warehouse_id=warehouse_id or [],
+            cursor=cursor,
+            filter=PostingFBSListFilter(since=since,
                                         to=to,
-                                        last_changed_status_date=PostingFBSListFilterLastChangedStatusDate(
-                                            from_field=from_last_changed_status_date,
-                                            to=to_last_changed_status_date)),
+                                        statuses=statuses or [],
+                                        order_id=order_id,
+                                        order_numbers=order_numbers or [],
+                                        delivery_method_ids=delivery_method_ids or [],
+                                        provider_ids=provider_ids or [],
+                                        warehouse_ids=warehouse_ids or [],
+                                        is_blr_traceable=is_blr_traceable,
+                                        last_changed_status_date=last_changed),
             limit=limit,
-            offset=offset,
+            sort_dir=sort_dir,
             with_field=PostingFBSListWith(analytics_data=analytics_data,
                                           barcodes=barcodes,
                                           financial_data=financial_data,
+                                          legal_info=legal_info,
                                           translit=translit))
         answer: PostingFBSListResponse = await self._posting_fbs_list_api.post(request)
         return answer

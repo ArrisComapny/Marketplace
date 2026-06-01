@@ -200,6 +200,7 @@ class OzOrders(Base):
     delivery_schema = Column(String(length=100), nullable=False)
     quantities = Column(Integer, nullable=False)
     price = Column(Numeric(precision=12, scale=2), nullable=False)
+    status = Column(String(length=255), nullable=True)
 
     __table_args__ = (
         UniqueConstraint('order_date', 'sku', 'posting_number', name='oz_orders_unique'),

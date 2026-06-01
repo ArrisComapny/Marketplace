@@ -33,8 +33,8 @@ async def add_oz_orders_entry(db_conn: OzDbConnection, client_id: str, api_key: 
     to_date = date_now - timedelta(microseconds=1)
     logger.info(f"За период с <{from_date}> до <{to_date}>")
 
-    limit = 1000
-    offset = 0
+    limit = 100
+    cursor = ""
     list_orders = []
     list_sku = list(db_conn.get_oz_sku_vendor_code(client_id=client_id).keys())
 
@@ -45,10 +45,10 @@ async def add_oz_orders_entry(db_conn: OzDbConnection, client_id: str, api_key: 
         answer = await api_user.get_posting_fbo_list(since=from_date.isoformat(),
                                                      to=to_date.isoformat(),
                                                      limit=limit,
-                                                     offset=offset)
+                                                     cursor=cursor)
 
         # Обработка полученных результатов
-        for order in answer.result:
+        for order in answer.postings:
             order_date = (order.in_process_at + timedelta(hours=3)).date()
             for product in order.products:
                 sku = str(product.sku)
@@ -71,25 +71,26 @@ async def add_oz_orders_entry(db_conn: OzDbConnection, client_id: str, api_key: 
                                                posting_number=order.posting_number,
                                                delivery_schema='FBO',
                                                quantities=product.quantity,
-                                               price=round(float(product.price), 2)))
+                                               price=round(float(product.price.amount), 2),
+                                               status=order.status))
 
-        if len(answer.result) >= limit:
-            offset += limit
+        if answer.has_next:
+            cursor = answer.cursor
             continue
 
         break
 
-    offset = 0
+    cursor = ""
 
     while True:
         # Получение списка финансовых транзакций
         answer = await api_user.get_posting_fbs_list(since=from_date.isoformat(),
                                                      to=to_date.isoformat(),
                                                      limit=limit,
-                                                     offset=offset)
+                                                     cursor=cursor)
 
         # Обработка полученных результатов
-        for order in answer.result.postings:
+        for order in answer.postings:
             order_date = (order.in_process_at + timedelta(hours=3)).date()
             for product in order.products:
                 sku = str(product.sku)
@@ -112,10 +113,11 @@ async def add_oz_orders_entry(db_conn: OzDbConnection, client_id: str, api_key: 
                                                posting_number=order.posting_number,
                                                delivery_schema='FBS',
                                                quantities=product.quantity,
-                                               price=round(float(product.price), 2)))
+                                               price=round(float(product.price.amount), 2),
+                                               status=order.status))
 
-        if answer.result.has_next:
-            offset += limit
+        if answer.has_next:
+            cursor = answer.cursor
             continue
 
         break

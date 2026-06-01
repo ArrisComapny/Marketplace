@@ -328,12 +328,14 @@ class OzDbConnection(DbConnection):
                 posting_number=row.posting_number,
                 delivery_schema=row.delivery_schema,
                 quantities=row.quantities,
-                price=row.price
+                price=row.price,
+                status=row.status
             ).on_conflict_do_update(
                 index_elements=['order_date', 'sku', 'posting_number'],
                 set_={'vendor_code': row.vendor_code,
                       'quantities': row.quantities,
-                      'price': row.price}
+                      'price': row.price,
+                      'status': row.status}
             )
             self.session.execute(stmt)
         self.session.commit()

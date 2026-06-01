@@ -93,6 +93,7 @@ class DataOzOrder:
     delivery_schema: str
     quantities: int
     price: float
+    status: str
 
 
 @dataclass
