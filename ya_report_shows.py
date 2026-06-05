@@ -119,7 +119,8 @@ async def add_yandex_report_entry(path_file: str, client_id: str, from_date: dat
                     'cpm': {'CPM': None},
                     'cost': {'Расчётные расходы на буст продаж с оплатой за показы, ₽': None},
                     'orders_sum': {'Выручка с бустом продаж с оплатой за показы': None},
-                    'advert_id': {'ID кампаний': None},
+                    'advert_id': {'ID кампаний': None,
+                                  'ID кампаний ': None},
                     'name_advert': {'Названия кампаний': None}}
     headers = [key for val in headers_dict.values() for key in val.keys()]
 
