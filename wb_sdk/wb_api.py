@@ -37,6 +37,7 @@ class WBApi:
         self._cards_list_api = self._api_factory.get_api(CardsListResponse)
         self._chats_api = self._api_factory.get_api(ChatsResponse)
         self._message_api = self._api_factory.get_api(MessageResponse)
+        self._supplies_api = self._api_factory.get_api(SuppliesResponse)
 
     async def get_supplier_sales(self, date_from: str, flag: int = 0) -> SupplierSalesResponse:
         """
@@ -422,3 +423,12 @@ class WBApi:
         answer: MessageResponse = await self._message_api.post(body=body, chat=True)
 
         return answer
+    #
+    # async def get_supplies(self, from_date: str, to_date: str,
+    #                        limit: int = 1000, offset: int = 0, status_ids: list[int] = None) -> SuppliesResponse:
+    #     query = SuppliesQueryRequest(limit=limit, offset=offset)
+    #     body = SuppliesBodyRequest(dates=[SuppliesDatesBodyRequest(from_field=from_date, till=to_date)],
+    #                                statusIDs=status_ids)
+    #     answer: MessageResponse = await self._message_api.post(body=body, chat=True)
+    #
+    #     return answer

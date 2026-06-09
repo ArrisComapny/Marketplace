@@ -1004,6 +1004,21 @@ def update_week_sheet(db_conn: DbConnection):
         if main_vendor in related:
             blocks[main_vendor] = [main_vendor] + [v for v in related if v != main_vendor]
 
+    # Полная группа артикулов по каждому мейну (из vendors_map), включая варианты,
+    # которых нет в шаблоне. FBS — общий пул на группу: в БД он может лежать под
+    # артикулом мейна или любого варианта. Если мейна нет в шаблоне, в related его
+    # тоже нет, и FBS под мейном терялся — поэтому FBS суммируем по всей группе.
+    main_to_members: dict[str, set[str]] = {}
+    for _v, (_mv, _tv) in vendors_map.items():
+        if _tv == 'main':
+            main_to_members.setdefault(_v, set()).add(_v)
+        elif _tv == 'maindouble':
+            main_to_members.setdefault(_mv, set()).add(_v)
+
+    def fbs_members(main_vendor: str, related: list) -> set[str]:
+        """Все артикулы группы для суммирования FBS-пула (с подстраховкой related+мейн)."""
+        return main_to_members.get(main_vendor, set()) | set(related) | {main_vendor}
+
     # Стоки на день выполнения скрипта
     today = date.today()
 
@@ -1110,9 +1125,10 @@ def update_week_sheet(db_conn: DbConnection):
     for main_vendor, related in blocks.items():
         rev = prof = cost = 0.0
         stock = orders = 0
-        for v in related:
-            # FBS-пул по артикулу — один на всех (не зависит от магазина).
+        # FBS-пул — общий на всю группу (мейн может отсутствовать в шаблоне).
+        for v in fbs_members(main_vendor, related):
             stock += stock_map.get(('FBS', v), 0)
+        for v in related:
             for cid in vendor_clients.get(v, ()):
                 s = profit_map.get((cid, v.lower()))
                 if s:
@@ -1201,11 +1217,13 @@ def update_week_sheet(db_conn: DbConnection):
             return 0
         return stock_start_map.get((client_id, vendor), 0)
 
-    def stock_start_for_main(related_vendors) -> int:
-        """Сток на начало периода для главного: FBO по всем магазинам + FBS-пул."""
+    def stock_start_for_main(related_vendors, main_vendor) -> int:
+        """Сток на начало для главного: FBO по магазинам (related) + FBS-пул по группе."""
         total = 0
-        for v in related_vendors:
+        # FBS-пул на начало — по всей группе (мейн может отсутствовать в шаблоне).
+        for v in fbs_members(main_vendor, related_vendors):
             total += stock_start_map.get(('FBS', v), 0)
+        for v in related_vendors:
             for cid in vendor_clients.get(v, ()):
                 total += stock_start_map.get((cid, v), 0)
         return total
@@ -1335,14 +1353,14 @@ def update_week_sheet(db_conn: DbConnection):
         def col_sum(letter):
             return "=СУММ(" + ";".join(f"{letter}{r}" for r in range(first_dub, last_dub + 1)) + ")"
 
-        # FBS главного — по всем связанным артикулам (включая скрытые).
-        fbs_total = sum(stock_map.get(('FBS', vendor), 0) for vendor in related)
+        # FBS главного — по всей группе артикула (мейн может отсутствовать в шаблоне).
+        fbs_total = sum(stock_map.get(('FBS', v), 0) for v in fbs_members(main_vendor, related))
         comment_main, qty_main, days_main = supply_for(main_vendor)
 
         # Компоненты прибыли O..W — суммой по дублям; X (Сток на начало) — Python value
         # (FBS-пул не выражается через сумму ячеек дублей); Y (Кол-во продаж) — суммой.
         component_sums = [col_sum(letter) for letter in "OPQRSTUVW"]
-        main_x_start = stock_start_for_main(related)
+        main_x_start = stock_start_for_main(related, main_vendor)
         qty_sales_sum = col_sum("Y")
 
         data.append([
@@ -1427,7 +1445,7 @@ def main(retries: int = 6) -> None:
         db_conn = DbConnection()
         db_conn.start_db()
 
-        stat_orders_update(db_conn=db_conn, days=1)
+        # stat_orders_update(db_conn=db_conn, days=1)
         update_week_sheet(db_conn=db_conn)
     except OperationalError:
         logger.error(f'Не доступна база данных. Осталось попыток подключения: {retries - 1}')

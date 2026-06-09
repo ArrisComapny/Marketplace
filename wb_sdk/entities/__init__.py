@@ -22,3 +22,4 @@ from .fbs_stocks import *
 from .cards_list import *
 from .chats import *
 from .message import *
+from .supplies import *

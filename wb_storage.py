@@ -122,7 +122,7 @@ async def main_wb_storage(retries: int = 6) -> None:
 
         for client in clients:
             try:
-                logger.info(f'Сбор информации о хранении маназина {client.name_company} за дату {from_date.date().isoformat()}')
+                logger.info(f'Сбор информации о хранении магазина {client.name_company} за дату {from_date.date().isoformat()}')
                 await get_storage(db_conn=db_conn,
                                   client_id=client.client_id,
                                   api_key=client.api_key,

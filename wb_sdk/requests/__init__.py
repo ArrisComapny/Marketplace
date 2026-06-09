@@ -24,3 +24,4 @@ from .fbs_stocks_request import *
 from .cards_list_request import *
 from .chats_request import *
 from .message_request import *
+from .supplies_request import *

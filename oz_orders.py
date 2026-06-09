@@ -29,7 +29,7 @@ async def add_oz_orders_entry(db_conn: OzDbConnection, client_id: str, api_key: 
             date_now (datetime): Начальная дата периода.
     """
 
-    from_date = date_now - timedelta(days=1)
+    from_date = date_now - timedelta(days=30)
     to_date = date_now - timedelta(microseconds=1)
     logger.info(f"За период с <{from_date}> до <{to_date}>")
 
