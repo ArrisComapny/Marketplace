@@ -182,32 +182,32 @@ def overseas_purchase():
     for row in rows:
         print(row)
 
-    # engine = create_engine(DB_URL)
-    #
-    # delete_sql = text("""
-    #     DELETE FROM public.overseas_purchase
-    #     WHERE accrual_date >= :to_date
-    # """)
-    #
-    # insert_sql = text("""
-    #     INSERT INTO public.overseas_purchase
-    #         (accrual_date, vendor_code, quantities, price, log_cost, log_add_cost)
-    #     VALUES
-    #         (:accrual_date, :vendor_code, :quantities, :price, :log_cost, :log_add_cost)
-    #     ON CONFLICT (accrual_date, vendor_code) DO UPDATE
-    #     SET
-    #         quantities = EXCLUDED.quantities,
-    #         price = EXCLUDED.price,
-    #         log_cost = EXCLUDED.log_cost,
-    #         log_add_cost = EXCLUDED.log_add_cost
-    # """)
-    #
-    # with engine.begin() as conn:
-    #     logger.info(f'Удаляю записи из overseas_purchase от {to_date.isoformat()}')
-    #     conn.execute(delete_sql, {'to_date': to_date})
-    #     logger.info('Вставляю новые записи в overseas_purchase')
-    #     conn.execute(insert_sql, rows)
-    #     logger.info('Запись успешно завершена')
+    engine = create_engine(DB_URL)
+
+    delete_sql = text("""
+        DELETE FROM public.overseas_purchase
+        WHERE accrual_date >= :to_date
+    """)
+
+    insert_sql = text("""
+        INSERT INTO public.overseas_purchase
+            (accrual_date, vendor_code, quantities, price, log_cost, log_add_cost)
+        VALUES
+            (:accrual_date, :vendor_code, :quantities, :price, :log_cost, :log_add_cost)
+        ON CONFLICT (accrual_date, vendor_code) DO UPDATE
+        SET
+            quantities = EXCLUDED.quantities,
+            price = EXCLUDED.price,
+            log_cost = EXCLUDED.log_cost,
+            log_add_cost = EXCLUDED.log_add_cost
+    """)
+
+    with engine.begin() as conn:
+        logger.info(f'Удаляю записи из overseas_purchase от {to_date.isoformat()}')
+        conn.execute(delete_sql, {'to_date': to_date})
+        logger.info('Вставляю новые записи в overseas_purchase')
+        conn.execute(insert_sql, rows)
+        logger.info('Запись успешно завершена')
 
 
 try:
