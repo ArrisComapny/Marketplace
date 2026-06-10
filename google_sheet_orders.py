@@ -1445,7 +1445,7 @@ def main(retries: int = 6) -> None:
         db_conn = DbConnection()
         db_conn.start_db()
 
-        # stat_orders_update(db_conn=db_conn, days=1)
+        stat_orders_update(db_conn=db_conn, days=1)
         update_week_sheet(db_conn=db_conn)
     except OperationalError:
         logger.error(f'Не доступна база данных. Осталось попыток подключения: {retries - 1}')
