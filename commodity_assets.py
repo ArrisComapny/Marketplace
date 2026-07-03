@@ -178,8 +178,8 @@ def add_supply(db_conn: DbConnection):
             )
         )
 
-    for key, values in aggregate_supply.items():
-        print(key, values)
+    # for key, values in aggregate_supply.items():
+    #     print(key, values)
     logger.info(f'Количество записей: {len(list_supplies)}')
 
     db_conn.add_supplies(list_supplies=list_supplies)
