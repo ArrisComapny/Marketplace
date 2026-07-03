@@ -174,7 +174,8 @@ async def add_yandex_report_entry(path_file: str, campaigns: list[DataYaCampaign
         'Расширенный доступ к сервисам',  # new pass
         'Складская обработка',  # new
         'Персональный менеджер',
-        'Доставка (средняя миля)'
+        'Доставка (средняя миля)',
+        'Товарные баннеры'
     ]
 
     try:
