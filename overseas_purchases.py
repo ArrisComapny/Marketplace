@@ -1,4 +1,5 @@
 import os
+import re
 import gspread
 import logging
 import datetime
@@ -19,6 +20,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 PATH_JSON = os.path.join(PROJECT_ROOT, 'templates', 'service-account-432709-1178152e9e49.json')
 PROJECT = 'Расчет себестоимости'
+PROJECT_MARKET = 'Общая по товарам'
 
 month = {
     1: 'январь',
@@ -165,12 +167,45 @@ def aggregate_rows(rows: list) -> list:
 
     return list(aggregated.values())
 
+def get_values_market(to_date: datetime.date) -> list:
+    sheet_name = 'Нина рынок'
+
+    creds = ServiceAccountCredentials.from_json_keyfile_name(PATH_JSON, SCOPE)
+    client = gspread.authorize(creds)
+    spreadsheet = client.open(PROJECT_MARKET)
+
+    worksheet = spreadsheet.worksheet(sheet_name)
+
+    data = worksheet.get_all_values()
+
+    entry = []
+
+    for val in data[19:]:
+        if len(val) >= 10 and val[0].strip():
+            try:
+                date_obj = datetime.datetime.strptime(val[6].strip(), "%d.%m.%Y").date()
+
+                if date_obj < to_date:
+                    continue
+
+                vendor_code = val[0].lower().strip()
+                quantities = int(val[4].strip())
+                cleaned_price = re.sub(r'[^\d,]', '', val[3])
+                price = round(float(cleaned_price.replace(',', '.')), 2)
+                entry.append([date_obj, vendor_code, quantities, price])
+            except Exception as e:
+                logger.error(f'Ошибка форматирования данных {val}: {str(e)}')
+
+    market_columns = ['accrual_date', 'vendor_code', 'quantities', 'price']
+    return [dict(zip(market_columns, row)) for row in entry]
+
 
 def overseas_purchase():
-    to_date = datetime.date.today() - datetime.timedelta(days=30)
+    to_date = datetime.date.today() - datetime.timedelta(days=90)
 
     values_china = get_values_china(to_date=to_date)
     values_russia = get_values_russia(to_date=to_date)
+    values_market = get_values_market(to_date=to_date)
 
     rows = values_china + values_russia
     rows = aggregate_rows(rows)
@@ -202,11 +237,28 @@ def overseas_purchase():
             log_add_cost = EXCLUDED.log_add_cost
     """)
 
+    delete_market_sql = text("""
+        DELETE FROM public.overseas_purchase_market
+        WHERE accrual_date >= :to_date
+    """)
+
+    insert_sql_market = text("""
+        INSERT INTO public.overseas_purchase_market
+            (accrual_date, vendor_code, quantities, price)
+        VALUES
+            (:accrual_date, :vendor_code, :quantities, :price)
+    """)
+
     with engine.begin() as conn:
         logger.info(f'Удаляю записи из overseas_purchase от {to_date.isoformat()}')
         conn.execute(delete_sql, {'to_date': to_date})
         logger.info('Вставляю новые записи в overseas_purchase')
         conn.execute(insert_sql, rows)
+        logger.info('Запись успешно завершена')
+        logger.info(f'Удаляю записи из overseas_purchase_market от {to_date.isoformat()}')
+        conn.execute(delete_market_sql, {'to_date': to_date})
+        logger.info('Вставляю новые записи в overseas_purchase_market')
+        conn.execute(insert_sql_market, values_market)
         logger.info('Запись успешно завершена')
 
 
