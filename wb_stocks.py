@@ -18,9 +18,35 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(me
 logger = logging.getLogger(__name__)
 
 
+async def load_cards_maps(api_user: WBApi) -> tuple[dict, dict]:
+    """
+        Строит справочник из карточек товара:
+            nmID  -> (vendorCode, subjectName)
+            chrtID -> techSize
+        Нужен, т.к. новый метод остатков отдаёт только nmId/chrtId без метаданных.
+    """
+    nm_map, chrt_map = {}, {}
+    updated_at, nm_id, limit = None, None, 100
+    while True:
+        answer = await api_user.get_cards_list(updated_at=updated_at, nm_id=nm_id, limit=limit)
+        if not answer or not answer.cards:
+            break
+        for card in answer.cards:
+            nm_map[card.nmID] = (card.vendorCode, card.subjectName)
+            for size in card.sizes:
+                if size.chrtID is not None:
+                    chrt_map[size.chrtID] = size.techSize
+        if len(answer.cards) < limit:
+            break
+        updated_at, nm_id = answer.cursor.updatedAt, answer.cursor.nmID
+    return nm_map, chrt_map
+
+
 async def get_stocks(db_conn: WBDbConnection, client_id: str, api_key: str) -> None:
     """
-        Получает список расходов по хранению для указанного клиента за определенный период времени.
+        Получает остатки на складах WB для кабинета через метод
+        analytics/v1/stocks-report/wb-warehouses (замена устаревшего supplier/stocks).
+        Метаданные (vendor_code/subject/size) подтягиваются из карточек товара.
 
         Args:
             db_conn (WBDbConnection): Объект соединения с базой данных.
@@ -33,77 +59,41 @@ async def get_stocks(db_conn: WBDbConnection, client_id: str, api_key: str) -> N
     # Инициализация API-клиента WB
     api_user = WBApi(api_key=api_key)
 
-    # Создание отчёта по хранению
-    for _ in range(3):
-        answer = await api_user.get_supplier_stocks(date_from=datetime(year=2000, month=1, day=1).date().isoformat())
+    # 1) Справочник карточек: nmID -> (vendor_code, subject), chrtID -> размер
+    nm_map, chrt_map = await load_cards_maps(api_user)
 
-        if answer:
-            for stock in answer.result:
-                if stock.quantity or stock.inWayToClient or stock.inWayFromClient:
-                    if (stock.nmId, stock.techSize, stock.warehouseName) in check_list:
-                        continue
-                    list_stocks.append(DataWBStock(date=datetime.today().date(),
-                                                   client_id=client_id,
-                                                   sku=str(stock.nmId),
-                                                   vendor_code=stock.supplierArticle,
-                                                   size=stock.techSize,
-                                                   category=stock.category,
-                                                   subject=stock.subject,
-                                                   warehouse=stock.warehouseName,
-                                                   quantity_warehouse=stock.quantity,
-                                                   quantity_to_client=stock.inWayToClient,
-                                                   quantity_from_client=stock.inWayFromClient))
-                    check_list.append((stock.nmId, stock.techSize, stock.warehouseName))
-        else:
-            continue
-    #
-    # # Агрегирование данных
-    # aggregate = {}
-    # for row in list_stocks:
-    #     key = (
-    #         row.date,
-    #         row.client_id,
-    #         row.sku,
-    #         row.size,
-    #         row.warehouse
-    #     )
-    #     if key in aggregate:
-    #         aggregate[key].append((row.quantity_warehouse,
-    #                                row.quantity_to_client,
-    #                                row.quantity_from_client,
-    #                                row.vendor_code,
-    #                                row.category,
-    #                                row.subject))
-    #     else:
-    #         aggregate[key] = [(row.quantity_warehouse,
-    #                            row.quantity_to_client,
-    #                            row.quantity_from_client,
-    #                            row.vendor_code,
-    #                            row.category,
-    #                            row.subject)]
-    #
-    # list_stocks = []
-    # for key, value in aggregate.items():
-    #     date, client_id, sku, size, warehouse = key
-    #     quantity_warehouse = sum([val[0] for val in value])
-    #     quantity_to_client = sum([val[1] for val in value])
-    #     quantity_from_client = sum([val[2] for val in value])
-    #     vendor_code = value[0][3]
-    #     category = value[0][4]
-    #     subject = value[0][5]
-    #     list_stocks.append(DataWBStock(
-    #         date=date,
-    #         client_id=client_id,
-    #         sku=sku,
-    #         vendor_code=vendor_code,
-    #         size=size,
-    #         category=category,
-    #         subject=subject,
-    #         warehouse=warehouse,
-    #         quantity_warehouse=quantity_warehouse,
-    #         quantity_to_client=quantity_to_client,
-    #         quantity_from_client=quantity_from_client)
-    #     )
+    # 2) Остатки постранично (лимит нового метода: 1 запрос / 20 сек на аккаунт)
+    offset, limit = 0, 1000
+    while True:
+        answer = await api_user.get_stocks_report_wb_warehouses(limit=limit, offset=offset)
+        items = answer.data.items if (answer and answer.data) else []
+        if not items:
+            break
+
+        for item in items:
+            if item.quantity or item.inWayToClient or item.inWayFromClient:
+                key = (item.nmId, item.chrtId, item.warehouseName)
+                if key in check_list:
+                    continue
+                vendor_code, subject = nm_map.get(item.nmId, ('', ''))
+                list_stocks.append(DataWBStock(date=datetime.today().date(),
+                                               client_id=client_id,
+                                               sku=str(item.nmId),
+                                               vendor_code=vendor_code or '',
+                                               size=chrt_map.get(item.chrtId) or '',
+                                               category='',
+                                               subject=subject or '',
+                                               warehouse=item.warehouseName,
+                                               quantity_warehouse=item.quantity,
+                                               quantity_to_client=item.inWayToClient,
+                                               quantity_from_client=item.inWayFromClient))
+                check_list.append(key)
+
+        if len(items) < limit:
+            break
+        offset += limit
+        await asyncio.sleep(20)   # держим лимит 1 запрос / 20 сек
+
     logger.info(f"Количсетво строк: {len(list_stocks)}")
     db_conn.add_wb_stock_entry(list_stocks=list_stocks)
 
