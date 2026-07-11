@@ -64,6 +64,16 @@ class WBDbConnection(DbConnection):
         return {sku: vendor_code for sku, vendor_code in result}
 
     @retry_on_exception()
+    def get_wb_card_vendor_map(self, client_id: str) -> dict:
+        """
+            Словарь {sku: vendor_code} по карточкам конкретного кабинета.
+            vendor_code берётся как есть (оригинальный регистр). Для фолбэка остатков.
+        """
+        result = self.session.query(WBCardProduct.sku, WBCardProduct.vendor_code) \
+            .filter(WBCardProduct.client_id == client_id).all()
+        return {sku: vendor_code for sku, vendor_code in result}
+
+    @retry_on_exception()
     def get_wb_stat_card_google(self) -> list:
         """
             Получает данные из wb_stat_card_google.

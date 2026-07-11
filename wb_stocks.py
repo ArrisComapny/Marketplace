@@ -61,6 +61,8 @@ async def get_stocks(db_conn: WBDbConnection, client_id: str, api_key: str) -> N
 
     # 1) Справочник карточек: nmID -> (vendor_code, subject), chrtID -> размер
     nm_map, chrt_map = await load_cards_maps(api_user)
+    # доп. источник: карточки этого кабинета из БД (фолбэк vendor_code по sku)
+    card_map = db_conn.get_wb_card_vendor_map(client_id)
 
     # 2) Остатки постранично (лимит нового метода: 1 запрос / 20 сек на аккаунт)
     offset, limit = 0, 1000
@@ -76,6 +78,8 @@ async def get_stocks(db_conn: WBDbConnection, client_id: str, api_key: str) -> N
                 if key in check_list:
                     continue
                 vendor_code, subject = nm_map.get(item.nmId, ('', ''))
+                if not vendor_code:                                  # фолбэк: карточки кабинета из БД
+                    vendor_code = card_map.get(str(item.nmId), '')
                 list_stocks.append(DataWBStock(date=datetime.today().date(),
                                                client_id=client_id,
                                                sku=str(item.nmId),
