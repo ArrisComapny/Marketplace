@@ -38,6 +38,15 @@ class WBApi:
         self._chats_api = self._api_factory.get_api(ChatsResponse)
         self._message_api = self._api_factory.get_api(MessageResponse)
         self._supplies_api = self._api_factory.get_api(SuppliesResponse)
+        self._stocks_report_wb_warehouses_api = self._api_factory.get_api(StocksReportWbWarehousesResponse)
+
+    async def get_stocks_report_wb_warehouses(self, limit: int = 1000, offset: int = 0) \
+            -> StocksReportWbWarehousesResponse:
+        """Остатки на складах WB (новый метод, замена supplier/stocks). Пагинация по offset."""
+        request = StocksReportWbWarehousesRequest(limit=limit, offset=offset)
+        answer: StocksReportWbWarehousesResponse = await self._stocks_report_wb_warehouses_api.post(body=request)
+
+        return answer
 
     async def get_supplier_sales(self, date_from: str, flag: int = 0) -> SupplierSalesResponse:
         """

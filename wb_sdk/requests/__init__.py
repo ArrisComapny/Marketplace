@@ -25,3 +25,4 @@ from .cards_list_request import *
 from .chats_request import *
 from .message_request import *
 from .supplies_request import *
+from .stocks_report_wb_warehouses_request import *
