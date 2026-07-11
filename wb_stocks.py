@@ -61,8 +61,8 @@ async def get_stocks(db_conn: WBDbConnection, client_id: str, api_key: str) -> N
 
     # 1) Справочник карточек: nmID -> (vendor_code, subject), chrtID -> размер
     nm_map, chrt_map = await load_cards_maps(api_user)
-    # доп. источник: карточки этого кабинета из БД (фолбэк vendor_code по sku)
-    card_map = db_conn.get_wb_card_vendor_map(client_id)
+    # доп. источник: глобальный справочник карточек из БД (фолбэк vendor_code по sku)
+    card_map = db_conn.get_wb_card_vendor_map()
 
     # 2) Остатки постранично (лимит нового метода: 1 запрос / 20 сек на аккаунт)
     offset, limit = 0, 1000
