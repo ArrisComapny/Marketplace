@@ -42,6 +42,26 @@ async def load_cards_maps(api_user: WBApi) -> tuple[dict, dict]:
     return nm_map, chrt_map
 
 
+# Явные переименования складов: имя нового метода -> каноническое (как в wb_orders
+# и справочнике wb_region_warehouse). Пополняется по мере проверки.
+WAREHOUSE_RENAME = {
+    "Новосемейкино": "Самара (Новосемейкино)",
+}
+
+
+def normalize_warehouse(name: str) -> str:
+    """
+        Приводит имя склада из нового метода к каноническому (совпадающему с
+        wb_orders и справочником wb_region_warehouse):
+          1) явные переименования по WAREHOUSE_RENAME;
+          2) снятие суффикса ' WB' (напр. 'Сарапул WB' -> 'Сарапул').
+    """
+    if not name:
+        return name
+    name = WAREHOUSE_RENAME.get(name, name)
+    return name.removesuffix(' WB').rstrip()
+
+
 async def get_stocks(db_conn: WBDbConnection, client_id: str, api_key: str) -> None:
     """
         Получает остатки на складах WB для кабинета через метод
@@ -74,7 +94,8 @@ async def get_stocks(db_conn: WBDbConnection, client_id: str, api_key: str) -> N
 
         for item in items:
             if item.quantity or item.inWayToClient or item.inWayFromClient:
-                key = (item.nmId, item.chrtId, item.warehouseName)
+                warehouse = normalize_warehouse(item.warehouseName)   # 'Сарапул WB' -> 'Сарапул'
+                key = (item.nmId, item.chrtId, warehouse)
                 if key in check_list:
                     continue
                 vendor_code, subject = nm_map.get(item.nmId, ('', ''))
@@ -87,7 +108,7 @@ async def get_stocks(db_conn: WBDbConnection, client_id: str, api_key: str) -> N
                                                size=chrt_map.get(item.chrtId) or '',
                                                category='',
                                                subject=subject or '',
-                                               warehouse=item.warehouseName,
+                                               warehouse=warehouse,
                                                quantity_warehouse=item.quantity,
                                                quantity_to_client=item.inWayToClient,
                                                quantity_from_client=item.inWayFromClient))
