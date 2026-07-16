@@ -181,7 +181,7 @@ def get_values_market(to_date: datetime.date) -> list:
     entry = []
 
     for val in data[19:]:
-        if len(val) >= 10 and val[0].strip():
+        if len(val) >= 7 and val[0].strip():   # используются val[0], val[3], val[4], val[6]
             try:
                 date_obj = datetime.datetime.strptime(val[6].strip(), "%d.%m.%Y").date()
 
@@ -258,8 +258,11 @@ def overseas_purchase():
         logger.info(f'Удаляю записи из overseas_purchase_market от {to_date.isoformat()}')
         conn.execute(delete_market_sql, {'to_date': to_date})
         logger.info('Вставляю новые записи в overseas_purchase_market')
-        conn.execute(insert_sql_market, values_market)
-        logger.info('Запись успешно завершена')
+        if values_market:
+            conn.execute(insert_sql_market, values_market)
+            logger.info('Запись успешно завершена')
+        else:
+            logger.warning('Нет данных по рынку — пропускаю вставку в overseas_purchase_market')
 
 
 try:
