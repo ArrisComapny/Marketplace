@@ -168,6 +168,9 @@ def aggregate_rows(rows: list) -> list:
     return list(aggregated.values())
 
 def get_values_market(to_date: datetime.date) -> list:
+    start_date = datetime.date(2026, 6, 2)
+    if to_date < start_date:
+        to_date = start_date
     sheet_name = 'Нина рынок'
 
     creds = ServiceAccountCredentials.from_json_keyfile_name(PATH_JSON, SCOPE)
