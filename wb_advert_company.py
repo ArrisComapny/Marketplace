@@ -136,7 +136,7 @@ async def add_statistic_adverts(db_conn: WBDbConnection, client_id: str, api_key
                 List[DataWBStatisticAdvert]: Список статистики рекламных компаний, удовлетворяющих условию фильтрации.
     """
     end_date = from_date.date()
-    start_date = end_date - timedelta(days=30)
+    start_date = end_date - timedelta(days=1)
 
     # Получение ID РК и время создания и окончания
     adverts = db_conn.get_wb_adverts_id(client_id=client_id, from_date=start_date)
