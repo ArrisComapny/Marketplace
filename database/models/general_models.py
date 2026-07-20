@@ -1,6 +1,6 @@
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import PrimaryKeyConstraint, UniqueConstraint
-from sqlalchemy import Column, String, MetaData, Integer, Identity, Numeric, ForeignKey, Date
+from sqlalchemy import Column, String, MetaData, Integer, Identity, Numeric, ForeignKey, Date, Boolean
 
 metadata = MetaData()
 Base = declarative_base(metadata=metadata)
@@ -16,6 +16,7 @@ class Client(Base):
     name_company = Column(String(length=255), nullable=False)
     entrepreneur = Column(String(length=255), nullable=False)
     tax_type = Column(String(length=255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default='true')
 
 
 class CostPrice(Base):

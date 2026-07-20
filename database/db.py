@@ -71,21 +71,24 @@ class DbConnection:
         return client
 
     @retry_on_exception()
-    def get_clients(self, marketplace: str = None) -> list[Type[Client]]:
+    def get_clients(self, marketplace: str = None, only_active: bool = True) -> list[Type[Client]]:
         """
             Возвращает список данных кабинета, отфильтрованный по заданному рынку.
 
             Args:
                 marketplace (str): Рынок для фильтрации.
+                only_active (bool): Возвращать только кабинеты с is_active = True.
+                    False — вернуть все, включая отключённые (для разовых выгрузок).
 
             Returns:
                 List[Type[Client]]: Список данных кабинета, удовлетворяющих условию фильтрации.
         """
+        query = self.session.query(Client)
         if marketplace:
-            result = self.session.query(Client).filter_by(marketplace=marketplace).all()
-        else:
-            result = self.session.query(Client).all()
-        return result
+            query = query.filter_by(marketplace=marketplace)
+        if only_active:
+            query = query.filter_by(is_active=True)
+        return query.all()
 
     @retry_on_exception()
     def get_exchange_rate(self, from_date: datetime.date, currency: str) -> float | None:
