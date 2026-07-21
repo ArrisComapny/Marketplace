@@ -67,7 +67,7 @@ async def get_campaign_ids(api_key: str) -> list[DataYaCampaigns]:
 
 async def report_generate(client_id: str, api_key: str, campaigns: list[DataYaCampaigns],
                           date_now: date) -> Union[str, None]:
-    date_from = date_now - timedelta(days=10)
+    date_from = date_now - timedelta(days=30)
     date_to = date_now - timedelta(days=1)
 
     report_id = None
