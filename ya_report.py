@@ -252,7 +252,13 @@ async def add_yandex_report_entry(path_file: str, campaigns: list[DataYaCampaign
                             service = next((v for v in row_data.get('service', {}).values() if v is not None), None)
                             vendor_code = next((v for v in row_data.get('vendor_code', {}).values() if v is not None),
                                                None)
-                            operation_type = sheet if 'Платное хранение' not in sheet else 'Платное хранение'
+
+                            if 'Платное хранение' in sheet:
+                                operation_type = 'Платное хранение'
+                            elif 'Размещение товаров и услуг' in sheet:
+                                operation_type = 'Размещение товаров на витрине'
+                            else:
+                                operation_type = sheet
 
                             operation_date = datetime.strptime(operation_date, '%Y-%m-%d %H:%M:%S').date()
                             cost = round(float(cost), 2)
