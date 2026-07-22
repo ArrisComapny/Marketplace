@@ -180,25 +180,44 @@ class WBDbConnection(DbConnection):
             Args:
                 list_operations (list[DataOperation]): Список данных об операциях.
         """
+        if not list_operations:
+            return
+
+        conflict_keys = ['accrual_date', 'type_of_transaction', 'posting_number', 'sku']
+
+        # Дедупликация внутри пачки: Postgres не даёт обновить одну строку дважды
+        # одним запросом. Оставляем последнюю запись по ключу — так же вело себя
+        # построчное добавление (каждая следующая перезаписывала предыдущую).
+        unique_rows = {}
         for row in list_operations:
-            stmt = insert(WBMain).values(
-                client_id=row.client_id,
-                accrual_date=row.accrual_date,
-                type_of_transaction=row.type_of_transaction,
-                vendor_code=row.vendor_code,
-                posting_number=row.posting_number,
-                delivery_schema=row.delivery_schema,
-                sku=row.sku,
-                sale=row.sale,
-                quantities=row.quantities,
-                commission=row.commission
-            ).on_conflict_do_update(
-                index_elements=['accrual_date', 'type_of_transaction', 'posting_number', 'sku'],
-                set_={'sale': row.sale,
-                      'quantities': row.quantities,
-                      'commission': row.commission}
+            key = (row.accrual_date, row.type_of_transaction, row.posting_number, row.sku)
+            unique_rows[key] = {
+                'client_id': row.client_id,
+                'accrual_date': row.accrual_date,
+                'type_of_transaction': row.type_of_transaction,
+                'vendor_code': row.vendor_code,
+                'posting_number': row.posting_number,
+                'delivery_schema': row.delivery_schema,
+                'sku': row.sku,
+                'sale': row.sale,
+                'quantities': row.quantities,
+                'commission': row.commission,
+            }
+        rows = list(unique_rows.values())
+
+        # Пакетная вставка: лимит Postgres — 65535 параметров на запрос,
+        # при 10 колонках это ~6500 строк; берём 1000 с запасом.
+        chunk_size = 1000
+        for i in range(0, len(rows), chunk_size):
+            stmt = insert(WBMain).values(rows[i:i + chunk_size])
+            stmt = stmt.on_conflict_do_update(
+                index_elements=conflict_keys,
+                set_={'sale': stmt.excluded.sale,
+                      'quantities': stmt.excluded.quantities,
+                      'commission': stmt.excluded.commission}
             )
             self.session.execute(stmt)
+
         self.session.commit()
         logger.info(f"Успешное добавление в базу")
 
@@ -466,38 +485,57 @@ class WBDbConnection(DbConnection):
             Args:
                 list_orders (list[DataWBOrder]): Список данных о заказах.
         """
+        if not list_orders:
+            return
+
+        conflict_keys = ['order_date', 'sku', 'posting_number']
+
+        # Дедупликация внутри пачки: Postgres не даёт обновить одну строку дважды
+        # одним запросом. За 20 дней один заказ часто приходит повторно (смена
+        # статуса, отмена). Оставляем последнюю запись — как было при построчной вставке.
+        unique_rows = {}
         for row in list_orders:
-            stmt = insert(WBOrders).values(
-                client_id=row.client_id,
-                order_date=row.order_date,
-                sku=row.sku,
-                vendor_code=row.vendor_code,
-                posting_number=row.posting_number,
-                category=row.category,
-                subject=row.subject,
-                price=row.price,
-                is_cancel=row.is_cancel,
-                cancel_date=row.cancel_date,
-                warehouse=row.warehouse,
-                warehouse_type=row.warehouse_type,
-                country=row.country,
-                oblast=row.oblast,
-                region=row.region
-            ).on_conflict_do_update(
-                index_elements=['order_date', 'sku', 'posting_number'],
-                set_={'vendor_code': row.vendor_code,
-                      'category': row.category,
-                      'subject': row.subject,
-                      'price': row.price,
-                      'is_cancel': row.is_cancel,
-                      'cancel_date': row.cancel_date,
-                      'warehouse': row.warehouse,
-                      'warehouse_type': row.warehouse_type,
-                      'country': row.country,
-                      'oblast': row.oblast,
-                      'region': row.region}
+            key = (row.order_date, row.sku, row.posting_number)
+            unique_rows[key] = {
+                'client_id': row.client_id,
+                'order_date': row.order_date,
+                'sku': row.sku,
+                'vendor_code': row.vendor_code,
+                'posting_number': row.posting_number,
+                'category': row.category,
+                'subject': row.subject,
+                'price': row.price,
+                'is_cancel': row.is_cancel,
+                'cancel_date': row.cancel_date,
+                'warehouse': row.warehouse,
+                'warehouse_type': row.warehouse_type,
+                'country': row.country,
+                'oblast': row.oblast,
+                'region': row.region,
+            }
+        rows = list(unique_rows.values())
+
+        # Пакетная вставка: лимит Postgres — 65535 параметров на запрос,
+        # при 15 колонках это ~4300 строк; берём 1000 с запасом.
+        chunk_size = 1000
+        for i in range(0, len(rows), chunk_size):
+            stmt = insert(WBOrders).values(rows[i:i + chunk_size])
+            stmt = stmt.on_conflict_do_update(
+                index_elements=conflict_keys,
+                set_={'vendor_code': stmt.excluded.vendor_code,
+                      'category': stmt.excluded.category,
+                      'subject': stmt.excluded.subject,
+                      'price': stmt.excluded.price,
+                      'is_cancel': stmt.excluded.is_cancel,
+                      'cancel_date': stmt.excluded.cancel_date,
+                      'warehouse': stmt.excluded.warehouse,
+                      'warehouse_type': stmt.excluded.warehouse_type,
+                      'country': stmt.excluded.country,
+                      'oblast': stmt.excluded.oblast,
+                      'region': stmt.excluded.region}
             )
             self.session.execute(stmt)
+
         self.session.commit()
         logger.info(f"Успешное добавление в базу")
 
