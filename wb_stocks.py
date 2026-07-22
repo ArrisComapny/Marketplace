@@ -46,6 +46,7 @@ async def load_cards_maps(api_user: WBApi) -> tuple[dict, dict]:
 # и справочнике wb_region_warehouse). Пополняется по мере проверки.
 WAREHOUSE_RENAME = {
     "Новосемейкино": "Самара (Новосемейкино)",
+    "Склад СПБ Шушары Московское": "СПБ Шушары",
 }
 
 
