@@ -97,7 +97,9 @@ class DbConnection:
 
     @retry_on_exception()
     def get_orders(self, from_date: datetime.date, to_date: datetime.date | None = None) -> list[DataOrder]:
-        clients = {client.client_id: client for client in self.get_clients()}
+        # Справочник по историческим данным -> нужны ВСЕ кабинеты, включая выключенные (is_active=false),
+        # иначе KeyError по client_id, у которого есть старые заказы, но is_active=false.
+        clients = {client.client_id: client for client in self.get_clients(only_active=False)}
         if to_date is None:
             query = text("""
                 SELECT client_id, vendor_code, orders_count

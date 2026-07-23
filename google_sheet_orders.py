@@ -1073,7 +1073,8 @@ def update_week_sheet(db_conn: DbConnection):
     for o in yesterday_orders + week_orders:
         vendor_clients.setdefault((o.vendor_code or '').lower(), set()).add(o.client.client_id)
 
-    clients = {c.client_id: c for c in db_conn.get_clients()}
+    # Справочник по историческим данным -> нужны ВСЕ кабинеты, включая выключенные (is_active=false).
+    clients = {c.client_id: c for c in db_conn.get_clients(only_active=False)}
 
     # Прибыль за неделю с разбивкой: (client_id, vendor_lower) -> dict со всеми статьями
     PROFIT_FIELDS = ('sale', 'cost', 'commission', 'acquiring',
