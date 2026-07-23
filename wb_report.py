@@ -114,8 +114,6 @@ async def get_report(db_conn: WBDbConnection, client_id: str, api_key: str, date
                                             acceptance=round(report.acceptance, 2),
                                             posting_number=report.srid))
             rrdid = report.rrd_id
-        # Страница пришла полной -> есть ещё данные. Сравниваем размер ПОСЛЕДНЕЙ страницы,
-        # а не накопленный список (иначе выгрузка обрывалась на 2*limit).
         if len(answer.result) == limit:
             continue
         break
