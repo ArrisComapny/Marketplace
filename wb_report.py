@@ -135,8 +135,8 @@ async def main_wb_report(retries: int = 6) -> None:
         date_to = date_now - timedelta(microseconds=1)
 
         for client in clients:
-            if client.name_company in 'TiVi':
-                continue
+            # if client.name_company in 'TiVi':
+            #     continue
             try:
                 logger.info(f"Получение отчёта для {client.name_company} за период от {date_from.date().isoformat()} "
                             f"до {date_to.date().isoformat()}")
