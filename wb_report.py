@@ -34,7 +34,7 @@ async def get_report(db_conn: WBDbConnection, client_id: str, api_key: str, date
     """
 
     list_report = []
-    limit = 100000
+    limit = 40000
     rrdid = 0
 
     # Инициализация API-клиента WB
@@ -135,6 +135,8 @@ async def main_wb_report(retries: int = 6) -> None:
         date_to = date_now - timedelta(microseconds=1)
 
         for client in clients:
+            if client.name_company in 'TiVi':
+                continue
             try:
                 logger.info(f"Получение отчёта для {client.name_company} за период от {date_from.date().isoformat()} "
                             f"до {date_to.date().isoformat()}")
