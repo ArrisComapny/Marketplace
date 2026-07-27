@@ -34,46 +34,69 @@ async def add_wb_orders_entry(db_conn: WBDbConnection, client_id: str, api_key: 
     logger.info(f"За дату {date_now - timedelta(days=1)}")
 
     list_orders = []
+    added_orders = set()
 
     # Инициализация API-клиента WB
     api_user = WBApi(api_key=api_key)
 
-    # Получение списка заказов
-    answer_orders = await api_user.get_supplier_orders(date_from=date_from.isoformat(), flag=0)
+    # WB отдаёт не более ~80000 строк за один запрос.
+    # Выгружаем частями: следующий запрос начинается с lastChangeDate последней строки,
+    # пока не придёт пустой ответ.
+    next_date_from = date_from.isoformat()
+    while True:
+        # Получение списка заказов
+        answer_orders = await api_user.get_supplier_orders(date_from=next_date_from, flag=0)
 
-    # Обработка полученных результатов
-    for order in answer_orders.result:
-        order_date = order.date.date()  # Дата заказа
-        cancel_date = order.cancelDate.date()  # Дата отмены
+        if not answer_orders.result:
+            break
 
-        if order_date >= date_now:
-            continue
-        posting_number = order.srid  # Уникальный идентификатор заказа
-        vendor_code = order.supplierArticle  # Артикул продукта
-        sku = str(order.nmId)  # Артикул продукта внутри системы WB
-        price = round(float(order.priceWithDisc), 2)  # Стоимость продажи товара
-        warehouse = order.warehouseName
-        warehouse_type = order.warehouseType
-        country = order.countryName
-        oblast = order.oblastOkrugName
-        region = order.regionName
+        # Обработка полученных результатов
+        for order in answer_orders.result:
+            order_date = order.date.date()  # Дата заказа
+            cancel_date = order.cancelDate.date()  # Дата отмены
 
-        # Добавление заказа в список
-        list_orders.append(DataWBOrder(client_id=client_id,
-                                       order_date=order_date,
-                                       sku=sku,
-                                       vendor_code=vendor_code,
-                                       category=order.category,
-                                       subject=order.subject,
-                                       posting_number=posting_number,
-                                       price=price,
-                                       is_cancel=order.isCancel,
-                                       cancel_date=cancel_date,
-                                       warehouse=warehouse,
-                                       warehouse_type=warehouse_type,
-                                       country=country,
-                                       oblast=oblast,
-                                       region=region))
+            if order_date >= date_now:
+                continue
+            posting_number = order.srid  # Уникальный идентификатор заказа
+            if posting_number in added_orders:  # Строки на границе частей могут дублироваться
+                continue
+            added_orders.add(posting_number)
+            vendor_code = order.supplierArticle  # Артикул продукта
+            sku = str(order.nmId)  # Артикул продукта внутри системы WB
+            price = round(float(order.priceWithDisc), 2)  # Стоимость продажи товара
+            warehouse = order.warehouseName
+            warehouse_type = order.warehouseType
+            country = order.countryName
+            oblast = order.oblastOkrugName
+            region = order.regionName
+
+            # Добавление заказа в список
+            list_orders.append(DataWBOrder(client_id=client_id,
+                                           order_date=order_date,
+                                           sku=sku,
+                                           vendor_code=vendor_code,
+                                           category=order.category,
+                                           subject=order.subject,
+                                           posting_number=posting_number,
+                                           price=price,
+                                           is_cancel=order.isCancel,
+                                           cancel_date=cancel_date,
+                                           warehouse=warehouse,
+                                           warehouse_type=warehouse_type,
+                                           country=country,
+                                           oblast=oblast,
+                                           region=region))
+
+        # Меньше лимита — выгрузка полная, дозапрос не нужен
+        if len(answer_orders.result) < 80000:
+            break
+
+        # Продолжаем с даты изменения последней строки
+        next_date_from = answer_orders.result[-1].lastChangeDate.isoformat()
+        logger.info(f"Получено {len(list_orders)} строк, продолжаю с {next_date_from}")
+
+        # Лимит endpoint'а: 1 запрос в минуту
+        await asyncio.sleep(65)
 
     logger.info(f"Количество записей: {len(list_orders)}")
     db_conn.add_wb_orders(list_orders=list_orders)
