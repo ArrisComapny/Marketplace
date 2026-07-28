@@ -212,3 +212,18 @@ class DataWBStockFBS:
     barcode: str
     vendor_code: str
     count: int
+
+
+@dataclass
+class DataWBSupply:
+    client_id: str
+    supply_id: str
+    preorder_id: str
+    phone: str
+    create_date: datetime.datetime
+    supply_date: datetime.datetime
+    fact_date: datetime.datetime
+    updated_date: datetime.datetime
+    status_id: int
+    box_type_id: int
+    is_box_on_pallet: bool

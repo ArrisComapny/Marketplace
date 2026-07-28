@@ -432,12 +432,12 @@ class WBApi:
         answer: MessageResponse = await self._message_api.post(body=body, chat=True)
 
         return answer
-    #
-    # async def get_supplies(self, from_date: str, to_date: str,
-    #                        limit: int = 1000, offset: int = 0, status_ids: list[int] = None) -> SuppliesResponse:
-    #     query = SuppliesQueryRequest(limit=limit, offset=offset)
-    #     body = SuppliesBodyRequest(dates=[SuppliesDatesBodyRequest(from_field=from_date, till=to_date)],
-    #                                statusIDs=status_ids)
-    #     answer: MessageResponse = await self._message_api.post(body=body, chat=True)
-    #
-    #     return answer
+
+    async def get_supplies(self, from_date: str, to_date: str,
+                           limit: int = 1000, offset: int = 0, status_ids: list[int] = None) -> SuppliesResponse:
+        query = SuppliesQueryRequest(limit=limit, offset=offset)
+        body = SuppliesBodyRequest(dates=[SuppliesDatesBodyRequest(from_field=from_date, till=to_date)],
+                                   statusIDs=status_ids or [])
+        answer: SuppliesResponse = await self._supplies_api.post(body=body, query=query)
+
+        return answer

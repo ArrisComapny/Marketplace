@@ -1,5 +1,6 @@
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy import Column, Integer, String, Date, ForeignKey, Numeric, Identity, UniqueConstraint, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Date, ForeignKey, Numeric, Identity, UniqueConstraint, Boolean, \
+    DateTime, Index, text
 
 from .general_models import Base
 
@@ -343,4 +344,31 @@ class WBStockFBS(Base):
 
     __table_args__ = (
         UniqueConstraint('client_id', 'warehouse_id', 'barcode', 'date', name='wb_fbs_stocks_unique'),
+    )
+
+
+class WBSupply(Base):
+    """Модель таблицы wb_supplies."""
+    __tablename__ = 'wb_supplies'
+
+    id = Column(Integer, Identity(), primary_key=True)
+    client_id = Column(String(length=255), ForeignKey('clients.client_id'), nullable=False)
+    supply_id = Column(String(length=255), default=None, nullable=True)
+    preorder_id = Column(String(length=255), nullable=False)
+    phone = Column(String(length=255), default=None, nullable=True)
+    create_date = Column(DateTime, nullable=False)
+    supply_date = Column(DateTime, default=None, nullable=True)
+    fact_date = Column(DateTime, default=None, nullable=True)
+    updated_date = Column(DateTime, default=None, nullable=True)
+    status_id = Column(Integer, nullable=False)
+    box_type_id = Column(Integer, default=None, nullable=True)
+    is_box_on_pallet = Column(Boolean, default=None, nullable=True)
+
+    __table_args__ = (
+        # Поставка с заказом идентифицируется по preorder_id (supply_id появляется позже),
+        # поставка без заказа (preorder_id = '0') — по supply_id
+        Index('wb_supplies_preorder_unique', 'preorder_id', unique=True,
+              postgresql_where=text("preorder_id != '0'")),
+        Index('wb_supplies_supply_unique', 'supply_id', unique=True,
+              postgresql_where=text("preorder_id = '0'")),
     )

@@ -63,11 +63,12 @@ class WBAsyncEngine:
                         if response.status in [404, 403, 401]:
                             raise ClientError
                         if response.content_type != 'application/json':
-                            logger.info(f"Получен ответ от {url} (html)")
-                            logger.error(f"Попытка повторного запроса.")
+                            logger.info(f"Получен ответ от {url} ({response.status}, {response.content_type})")
+                            logger.error(f"Попытка повторного запроса. Осталось попыток: {retry - 1}")
                             await asyncio.sleep(60)
                             if response.status == 503:
                                 await asyncio.sleep(60)
+                            retry -= 1
                             continue
                         if response.status not in [200, 204]:
                             r = await response.json()

@@ -16,7 +16,7 @@ class SuppliesDatesBodyRequest(BaseEntity):
 
     from_field: str = Field(alias='from')
     till: str
-    type_field: Optional[str] = 'createDate'
+    type_field: str = Field(alias='type', default='createDate')
 
 class SuppliesBodyRequest(BaseRequest):
     """Запрос по поставкам."""

@@ -654,6 +654,57 @@ class WBDbConnection(DbConnection):
         logger.info(f"Успешное добавление в базу")
 
     @retry_on_exception()
+    def add_wb_supplies(self, list_supplies: list[DataWBSupply]) -> None:
+        """
+            Добавление и обновление в базе данных записей о поставках FBW.
+
+            Args:
+                list_supplies (list[DataWBSupply]): Список данных о поставках FBW.
+        """
+        def to_values(row: DataWBSupply) -> dict:
+            return {'client_id': row.client_id,
+                    'supply_id': row.supply_id,
+                    'preorder_id': row.preorder_id,
+                    'phone': row.phone,
+                    'create_date': row.create_date,
+                    'supply_date': row.supply_date,
+                    'fact_date': row.fact_date,
+                    'updated_date': row.updated_date,
+                    'status_id': row.status_id,
+                    'box_type_id': row.box_type_id,
+                    'is_box_on_pallet': row.is_box_on_pallet}
+
+        # Дедупликация по ключу конфликта: при повторе в пачке остаётся последняя версия
+        by_preorder = {row.preorder_id: row for row in list_supplies if row.preorder_id != '0'}
+        by_supply = {row.supply_id: row for row in list_supplies
+                     if row.preorder_id == '0' and row.supply_id is not None}
+
+        batches = [
+            (list(by_preorder.values()), ['preorder_id'], "preorder_id != '0'"),
+            (list(by_supply.values()), ['supply_id'], "preorder_id = '0'"),
+        ]
+
+        chunk_size = 1000
+        for rows, index_elements, index_where in batches:
+            for start in range(0, len(rows), chunk_size):
+                chunk = rows[start:start + chunk_size]
+                stmt = insert(WBSupply).values([to_values(r) for r in chunk])
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=index_elements,
+                    index_where=text(index_where),
+                    set_={'supply_id': stmt.excluded.supply_id,
+                          'supply_date': stmt.excluded.supply_date,
+                          'fact_date': stmt.excluded.fact_date,
+                          'updated_date': stmt.excluded.updated_date,
+                          'status_id': stmt.excluded.status_id,
+                          'box_type_id': stmt.excluded.box_type_id,
+                          'is_box_on_pallet': stmt.excluded.is_box_on_pallet}
+                )
+                self.session.execute(stmt)
+        self.session.commit()
+        logger.info(f"Успешное добавление в базу")
+
+    @retry_on_exception()
     def add_wb_fbs_stocks(self, list_stocks: list[DataWBStockFBS]) -> None:
         """
             Добавление данных об остатках на складах FBS.
