@@ -20,7 +20,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 PATH_JSON = os.path.join(PROJECT_ROOT, 'templates', 'service-account-432709-1178152e9e49.json')
 PROJECT = 'Расчет себестоимости'
-PROJECT_MARKET = 'Общая по товарам'
+PROJECT_MARKET = 'Arris - ТОВАРЫ РЫНОК'
 
 month = {
     1: 'январь',
@@ -171,7 +171,7 @@ def get_values_market(to_date: datetime.date) -> list:
     start_date = datetime.date(2026, 6, 2)
     if to_date < start_date:
         to_date = start_date
-    sheet_name = 'Нина рынок'
+    sheet_name = 'Приемки'
 
     creds = ServiceAccountCredentials.from_json_keyfile_name(PATH_JSON, SCOPE)
     client = gspread.authorize(creds)
@@ -183,17 +183,17 @@ def get_values_market(to_date: datetime.date) -> list:
 
     entry = []
 
-    for val in data[19:]:
-        if len(val) >= 7 and val[0].strip():   # используются val[0], val[3], val[4], val[6]
+    for val in data:
+        if len(val) >= 8 and all(val[i].strip() for i in (0, 1, 6, 7)):
             try:
-                date_obj = datetime.datetime.strptime(val[6].strip(), "%d.%m.%Y").date()
+                date_obj = datetime.datetime.strptime(val[0].strip(), "%d.%m.%Y").date()
 
                 if date_obj < to_date:
                     continue
 
-                vendor_code = val[0].lower().strip()
-                quantities = int(re.sub(r'[^\d,]', '', val[4]))
-                cleaned_price = re.sub(r'[^\d,]', '', val[3])
+                vendor_code = val[1].lower().strip()
+                quantities = int(re.sub(r'[^\d,]', '', val[6]))
+                cleaned_price = re.sub(r'[^\d,]', '', val[7])
                 price = round(float(cleaned_price.replace(',', '.')), 2)
                 entry.append([date_obj, vendor_code, quantities, price])
             except Exception as e:

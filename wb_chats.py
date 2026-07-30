@@ -73,6 +73,10 @@ async def get_chats(
            'Давайте обсудим, что не так с товаром. '
            'Пожалуйста, расскажите подробно: попробую решить проблему')
 
+    mes2 = ('Здравствуйте. Вы дополнили отзыв и поставили низкую оценку. '
+            'Очень хотим разобраться и всё исправить. '
+            'Пожалуйста, расскажите подробно: попробую решить проблему')
+
     api_user = WBApi(api_key=api_key)
     answer_chats = await api_user.get_chats()
     result = answer_chats.result
@@ -83,7 +87,7 @@ async def get_chats(
                 message = row.lastMessage.text
                 timestamp = row.lastMessage.addTimestamp
 
-                if message == mes and timestamp >= from_timestamp:
+                if message in (mes, mes2) and timestamp >= from_timestamp:
                     vendor_code = skus.get(str(row.goodCard.nmID))
                     if vendor_code:
                         list_chats.append((row.replySign, vendor_code, timestamp))
