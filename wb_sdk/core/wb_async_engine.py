@@ -62,6 +62,8 @@ class WBAsyncEngine:
                     async with session.post(url, json=json, params=params, ssl=False, timeout=120) as response:
                         if response.status in [404, 403, 401]:
                             raise ClientError
+                        if response.status == 204:
+                            return []
                         if response.content_type != 'application/json':
                             logger.info(f"Получен ответ от {url} ({response.status}, {response.content_type})")
                             logger.error(f"Попытка повторного запроса. Осталось попыток: {retry - 1}")

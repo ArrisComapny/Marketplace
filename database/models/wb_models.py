@@ -194,6 +194,72 @@ class WBReport(Base):
     posting_number = Column(String(length=255), nullable=False)
 
 
+class WBReportDaily(Base):
+    """Модель таблицы wb_report_daily (ежедневный детализированный отчёт)."""
+    __tablename__ = 'wb_report_daily'
+
+    id = Column(Integer, Identity(), primary_key=True)
+    client_id = Column(String(length=255), ForeignKey('clients.client_id'), nullable=False)
+    realizationreport_id = Column(String(length=255), default=None, nullable=True)
+    gi_id = Column(String(length=255), default=None, nullable=True)
+    subject_name = Column(String(length=255), default=None, nullable=True)
+    sku = Column(String(length=255), nullable=False)
+    brand = Column(String(length=255), default=None, nullable=True)
+    vendor_code = Column(String(length=255), nullable=False)
+    size = Column(String(length=255), default=None, nullable=True)
+    barcode = Column(String(length=255), default=None, nullable=True)
+    doc_type_name = Column(String(length=255), default=None, nullable=True)
+    quantity = Column(Integer, nullable=False)
+    retail_price = Column(Numeric(precision=12, scale=2), nullable=False)
+    retail_amount = Column(Numeric(precision=12, scale=2), nullable=False)
+    sale_percent = Column(Integer, nullable=False)
+    commission_percent = Column(Numeric(precision=12, scale=2), nullable=False)
+    office_name = Column(String(length=255), default=None, nullable=True)
+    supplier_oper_name = Column(String(length=255), nullable=False)
+    order_date = Column(Date, nullable=False)
+    sale_date = Column(Date, nullable=False)
+    operation_date = Column(Date, nullable=False)
+    shk_id = Column(String(length=255), default=None, nullable=True)
+    retail_price_withdisc_rub = Column(Numeric(precision=12, scale=2), nullable=False)
+    delivery_amount = Column(Integer, nullable=False)
+    return_amount = Column(Integer, nullable=False)
+    delivery_rub = Column(Numeric(precision=12, scale=2), nullable=False)
+    gi_box_type_name = Column(String(length=255), default=None, nullable=True)
+    product_discount_for_report = Column(Numeric(precision=12, scale=2), nullable=False)
+    supplier_promo = Column(Numeric(precision=12, scale=2), nullable=False)
+    order_id = Column(String(length=255), default=None, nullable=True)
+    ppvz_spp_prc = Column(Numeric(precision=12, scale=2),  nullable=False)
+    ppvz_kvw_prc_base = Column(Numeric(precision=12, scale=2), nullable=False)
+    ppvz_kvw_prc = Column(Numeric(precision=12, scale=2), nullable=False)
+    sup_rating_prc_up = Column(Numeric(precision=12, scale=2), nullable=False)
+    is_kgvp_v2 = Column(Numeric(precision=12, scale=2), nullable=False)
+    ppvz_sales_commission = Column(Numeric(precision=12, scale=2), nullable=False)
+    ppvz_for_pay = Column(Numeric(precision=12, scale=2), nullable=False)
+    ppvz_reward = Column(Numeric(precision=12, scale=2), nullable=False)
+    acquiring_fee = Column(Numeric(precision=12, scale=2), nullable=False)
+    acquiring_bank = Column(String(length=255), default=None, nullable=True)
+    ppvz_vw = Column(Numeric(precision=12, scale=2), nullable=False)
+    ppvz_vw_nds = Column(Numeric(precision=12, scale=2), nullable=False)
+    ppvz_office_id = Column(String(length=255), default=None, nullable=True)
+    ppvz_office_name = Column(String(length=255), default=None, nullable=True)
+    ppvz_supplier_id = Column(String(length=255), default=None, nullable=True)
+    ppvz_supplier_name = Column(String(length=255), default=None, nullable=True)
+    ppvz_inn = Column(String(length=255), default=None, nullable=True)
+    declaration_number = Column(String(length=255), default=None, nullable=True)
+    bonus_type_name = Column(String(length=1000), default=None, nullable=True)
+    sticker_id = Column(String(length=255), default=None, nullable=True)
+    site_country = Column(String(length=255), default=None, nullable=True)
+    penalty = Column(Numeric(precision=12, scale=2), nullable=False)
+    additional_payment = Column(Numeric(precision=12, scale=2), nullable=False)
+    rebill_logistic_cost = Column(Numeric(precision=12, scale=2), nullable=False)
+    rebill_logistic_org = Column(String(length=255), default=None, nullable=True)
+    kiz = Column(String(length=255), default=None, nullable=True)
+    storage_fee = Column(Numeric(precision=12, scale=2), nullable=False)
+    deduction = Column(Numeric(precision=12, scale=2), nullable=False)
+    acceptance = Column(Numeric(precision=12, scale=2), nullable=False)
+    posting_number = Column(String(length=255), nullable=False)
+
+
 class WBTypeServices(Base):
     """Модель таблицы wb_type_services."""
     __tablename__ = 'wb_type_services'
@@ -371,4 +437,58 @@ class WBSupply(Base):
               postgresql_where=text("preorder_id != '0'")),
         Index('wb_supplies_supply_unique', 'supply_id', unique=True,
               postgresql_where=text("preorder_id = '0'")),
+    )
+
+
+class WBSupplyDetails(Base):
+    """Модель таблицы wb_supplies_details."""
+    __tablename__ = 'wb_supplies_details'
+
+    id = Column(Integer, Identity(), primary_key=True)
+    client_id = Column(String(length=255), ForeignKey('clients.client_id'), nullable=False)
+    supply_id = Column(String(length=255), nullable=False)
+    warehouse_id = Column(Integer, default=None, nullable=True)
+    warehouse_name = Column(String(length=255), default=None, nullable=True)
+    actual_warehouse_id = Column(Integer, default=None, nullable=True)
+    actual_warehouse_name = Column(String(length=255), default=None, nullable=True)
+    acceptance_cost = Column(Numeric(precision=12, scale=2), default=None, nullable=True)
+    paid_acceptance_coefficient = Column(Numeric(precision=12, scale=2), default=None, nullable=True)
+    storage_coef = Column(Numeric(precision=12, scale=2), default=None, nullable=True)
+    delivery_coef = Column(Numeric(precision=12, scale=2), default=None, nullable=True)
+    reject_reason = Column(String(length=1000), default=None, nullable=True)
+    supplier_assign_name = Column(String(length=255), default=None, nullable=True)
+    quantity = Column(Integer, default=None, nullable=True)
+    accepted_quantity = Column(Integer, default=None, nullable=True)
+    unloading_quantity = Column(Integer, default=None, nullable=True)
+    ready_for_sale_quantity = Column(Integer, default=None, nullable=True)
+    depersonalized_quantity = Column(Integer, default=None, nullable=True)
+    virtual_type_id = Column(Integer, default=None, nullable=True)
+    updated_date = Column(DateTime, default=None, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('supply_id', name='wb_supplies_details_unique'),
+    )
+
+
+class WBSupplyGoods(Base):
+    """Модель таблицы wb_supplies_goods."""
+    __tablename__ = 'wb_supplies_goods'
+
+    id = Column(Integer, Identity(), primary_key=True)
+    client_id = Column(String(length=255), ForeignKey('clients.client_id'), nullable=False)
+    supply_id = Column(String(length=255), nullable=False)
+    barcode = Column(String(length=255), nullable=False)
+    vendor_code = Column(String(length=255), default=None, nullable=True)
+    sku = Column(String(length=255), default=None, nullable=True)
+    tech_size = Column(String(length=255), default=None, nullable=True)
+    color = Column(String(length=255), default=None, nullable=True)
+    need_kiz = Column(Boolean, default=None, nullable=True)
+    supplier_box_amount = Column(Integer, default=None, nullable=True)
+    quantity = Column(Integer, default=None, nullable=True)
+    accepted_quantity = Column(Integer, default=None, nullable=True)
+    unloading_quantity = Column(Integer, default=None, nullable=True)
+    ready_for_sale_quantity = Column(Integer, default=None, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('supply_id', 'barcode', name='wb_supplies_goods_unique'),
     )

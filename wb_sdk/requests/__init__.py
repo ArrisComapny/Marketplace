@@ -25,4 +25,8 @@ from .cards_list_request import *
 from .chats_request import *
 from .message_request import *
 from .supplies_request import *
+from .supply_details_request import *
+from .supply_goods_request import *
 from .stocks_report_wb_warehouses_request import *
+from .sales_reports_list_request import *
+from .sales_reports_detailed_by_id_request import *

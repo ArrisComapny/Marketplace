@@ -38,7 +38,11 @@ class WBApi:
         self._chats_api = self._api_factory.get_api(ChatsResponse)
         self._message_api = self._api_factory.get_api(MessageResponse)
         self._supplies_api = self._api_factory.get_api(SuppliesResponse)
+        self._supply_details_api = self._api_factory.get_api(SupplyDetailsResponse)
+        self._supply_goods_api = self._api_factory.get_api(SupplyGoodsResponse)
         self._stocks_report_wb_warehouses_api = self._api_factory.get_api(StocksReportWbWarehousesResponse)
+        self._sales_reports_list_api = self._api_factory.get_api(SalesReportsListResponse)
+        self._sales_reports_detailed_api = self._api_factory.get_api(SalesReportsDetailedResponse)
 
     async def get_stocks_report_wb_warehouses(self, limit: int = 1000, offset: int = 0) \
             -> StocksReportWbWarehousesResponse:
@@ -439,5 +443,83 @@ class WBApi:
         body = SuppliesBodyRequest(dates=[SuppliesDatesBodyRequest(from_field=from_date, till=to_date)],
                                    statusIDs=status_ids or [])
         answer: SuppliesResponse = await self._supplies_api.post(body=body, query=query)
+
+        return answer
+
+    async def get_supply_details(self, supply_id: int, is_preorder_id: bool = False) -> SupplyDetailsResponse:
+        """
+            Детали поставки по ID. \n
+            Лимит: 30 запросов в минуту на аккаунт продавца.
+
+            Args:
+                supply_id (int): ID поставки или заказа.
+                is_preorder_id (bool, optional): True — в supply_id передан ID заказа (preorderID),
+                    False — ID поставки (supplyID). Default to False.
+        """
+        query = SupplyDetailsRequest(isPreorderID=str(is_preorder_id).lower())
+        answer: SupplyDetailsResponse = await self._supply_details_api.get(query=query,
+                                                                           format_dict={'ID': supply_id})
+
+        return answer
+
+    async def get_supply_goods(self, supply_id: int, limit: int = 1000, offset: int = 0,
+                               is_preorder_id: bool = False) -> SupplyGoodsResponse:
+        """
+            Товары поставки по ID. \n
+            Лимит: 30 запросов в минуту на аккаунт продавца.
+
+            Args:
+                supply_id (int): ID поставки или заказа.
+                limit (int, optional): Количество записей в ответе, не более 1000. Default to 1000.
+                offset (int, optional): После какого элемента выдавать данные. Default to 0.
+                is_preorder_id (bool, optional): True — в supply_id передан ID заказа (preorderID),
+                    False — ID поставки (supplyID). Default to False.
+        """
+        query = SupplyGoodsRequest(limit=limit, offset=offset, isPreorderID=str(is_preorder_id).lower())
+        answer: SupplyGoodsResponse = await self._supply_goods_api.get(query=query,
+                                                                       format_dict={'ID': supply_id})
+
+        return answer
+
+    async def get_sales_reports_list(self, date_from: str, date_to: str, period: str = 'daily',
+                                     limit: int = 1000, offset: int = 0) -> SalesReportsListResponse:
+        """
+            Список отчётов реализации (finance-api). \n
+            Данные доступны с 1 января 2025 года. \n
+            Лимит: 1 запрос в минуту на аккаунт продавца.
+
+            Args:
+                date_from (str): Начальная дата отчёта (RFC3339, время в МСК). Пример: "2025-06-20".
+                date_to (str): Конечная дата отчёта (RFC3339, время в МСК).
+                period (str, optional): Периодичность отчётов: "daily" или "weekly". По умолчанию "daily".
+                limit (int, optional): Количество отчётов в ответе, не более 1000.
+                offset (int, optional): Сколько элементов пропустить.
+        """
+        body = SalesReportsListRequest(dateFrom=date_from,
+                                       dateTo=date_to,
+                                       period=period,
+                                       limit=limit,
+                                       offset=offset)
+        answer: SalesReportsListResponse = await self._sales_reports_list_api.post(body=body)
+
+        return answer
+
+    async def get_sales_reports_detailed(self, report_id: int, limit: int = 100000,
+                                         rrd_id: int = 0) -> SalesReportsDetailedResponse:
+        """
+            Детализация к отчёту реализации по ID отчёта (finance-api). \n
+            Данные доступны с 1 января 2025 года. \n
+            Лимит: 1 запрос в минуту на аккаунт продавца. \n
+            Пагинация: начинать с rrd_id=0, в следующих запросах передавать rrdId
+            из последней строки предыдущего ответа.
+
+            Args:
+                report_id (int): ID отчёта.
+                limit (int, optional): Количество строк в ответе, не более 100000.
+                rrd_id (int, optional): ID строки, с которой продолжить выгрузку.
+        """
+        body = SalesReportsDetailedByIdRequest(limit=limit, rrdId=rrd_id)
+        answer: SalesReportsDetailedResponse = await self._sales_reports_detailed_api.post(
+            body=body, format_dict={'reportId': report_id})
 
         return answer

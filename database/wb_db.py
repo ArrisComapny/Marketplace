@@ -454,6 +454,119 @@ class WBDbConnection(DbConnection):
         logger.info(f"Успешное добавление в базу")
 
     @retry_on_exception()
+    def get_wb_report_daily_ids(self, client_id: str) -> list[str]:
+        """
+            Список ID отчётов, уже загруженных в wb_report_daily по кабинету.
+
+            Args:
+                client_id (str): ID кабинета.
+        """
+        report_ids = self.session.query(WBReportDaily.realizationreport_id).filter_by(
+            client_id=client_id).distinct().all()
+        return [r.realizationreport_id for r in report_ids]
+
+    @retry_on_exception()
+    def add_wb_report_daily_entry(self, client_id: str, operation_date: date,
+                                  realizationreport_id: str, list_report: list[DataWBReport]) -> None:
+        """
+            Добавление в базу данных строк ежедневного детализированного отчёта (finance-api).
+            Повторная загрузка отчёта перезаписывает его строки.
+            Новые типы операций попутно добавляются в wb_type_services.
+
+            Args:
+                client_id (str): ID кабинета.
+                operation_date (date): Дата формирования отчёта.
+                realizationreport_id (str): ID отчёта.
+                list_report (list[DataWBReport]): Список строк отчёта.
+        """
+        self.session.query(WBReportDaily).filter_by(
+            client_id=client_id,
+            operation_date=operation_date,
+            realizationreport_id=realizationreport_id).delete(synchronize_session=False)
+        self.session.commit()
+
+        type_services = set(self.session.query(WBTypeServices.operation_type,
+                                               WBTypeServices.service).all())
+        for row in list_report:
+            match_found = any(
+                row.supplier_oper_name == existing_type[0] and (
+                        (existing_type[1] is None and row.bonus_type_name is None) or
+                        (existing_type[1] is not None and row.bonus_type_name is not None
+                         and row.bonus_type_name.startswith(existing_type[1]))
+                )
+                for existing_type in type_services
+            )
+            if not match_found:
+                new_type = WBTypeServices(operation_type=row.supplier_oper_name,
+                                          service=row.bonus_type_name,
+                                          type_name='new')
+                self.session.add(new_type)
+                type_services.add((row.supplier_oper_name, row.bonus_type_name))
+
+            new = WBReportDaily(client_id=client_id,
+                                realizationreport_id=row.realizationreport_id,
+                                gi_id=row.gi_id,
+                                subject_name=row.subject_name,
+                                sku=row.sku,
+                                brand=row.brand,
+                                vendor_code=row.vendor_code,
+                                size=row.size,
+                                barcode=row.barcode,
+                                doc_type_name=row.doc_type_name,
+                                quantity=row.quantity,
+                                retail_price=row.retail_price,
+                                retail_amount=row.retail_amount,
+                                sale_percent=row.sale_percent,
+                                commission_percent=row.commission_percent,
+                                office_name=row.office_name,
+                                supplier_oper_name=row.supplier_oper_name,
+                                order_date=row.order_date,
+                                sale_date=row.sale_date,
+                                operation_date=row.operation_date,
+                                shk_id=row.shk_id,
+                                retail_price_withdisc_rub=row.retail_price_withdisc_rub,
+                                delivery_amount=row.delivery_amount,
+                                return_amount=row.return_amount,
+                                delivery_rub=row.delivery_rub,
+                                gi_box_type_name=row.gi_box_type_name,
+                                product_discount_for_report=row.product_discount_for_report,
+                                supplier_promo=row.supplier_promo,
+                                order_id=row.order_id,
+                                ppvz_spp_prc=row.ppvz_spp_prc,
+                                ppvz_kvw_prc_base=row.ppvz_kvw_prc_base,
+                                ppvz_kvw_prc=row.ppvz_kvw_prc,
+                                sup_rating_prc_up=row.sup_rating_prc_up,
+                                is_kgvp_v2=row.is_kgvp_v2,
+                                ppvz_sales_commission=row.ppvz_sales_commission,
+                                ppvz_for_pay=row.ppvz_for_pay,
+                                ppvz_reward=row.ppvz_reward,
+                                acquiring_fee=row.acquiring_fee,
+                                acquiring_bank=row.acquiring_bank,
+                                ppvz_vw=row.ppvz_vw,
+                                ppvz_vw_nds=row.ppvz_vw_nds,
+                                ppvz_office_id=row.ppvz_office_id,
+                                ppvz_office_name=row.ppvz_office_name,
+                                ppvz_supplier_id=row.ppvz_supplier_id,
+                                ppvz_supplier_name=row.ppvz_supplier_name,
+                                ppvz_inn=row.ppvz_inn,
+                                declaration_number=row.declaration_number,
+                                bonus_type_name=row.bonus_type_name,
+                                sticker_id=row.sticker_id,
+                                site_country=row.site_country,
+                                penalty=row.penalty,
+                                additional_payment=row.additional_payment,
+                                rebill_logistic_cost=row.rebill_logistic_cost,
+                                rebill_logistic_org=row.rebill_logistic_org,
+                                kiz=row.kiz,
+                                storage_fee=row.storage_fee,
+                                deduction=row.deduction,
+                                acceptance=row.acceptance,
+                                posting_number=row.posting_number)
+            self.session.add(new)
+        self.session.commit()
+        logger.info(f"Успешное добавление в базу")
+
+    @retry_on_exception()
     def add_wb_storage_entry(self, list_storage: list[DataWBStorage]) -> None:
         """
             Добавление в базу данных записи о хранении.
@@ -701,6 +814,142 @@ class WBDbConnection(DbConnection):
                           'is_box_on_pallet': stmt.excluded.is_box_on_pallet}
                 )
                 self.session.execute(stmt)
+        self.session.commit()
+        logger.info(f"Успешное добавление в базу")
+
+    @retry_on_exception()
+    def get_wb_supplies_for_details(self, client_id: str) -> list[str]:
+        """
+            Возвращает supply_id поставок, по которым нужно запросить детали и товары:
+            отгруженные поставки (статусы 4, 5, 6), которых ещё нет в wb_supplies_details,
+            находящиеся в процессе приёмки (4, 6) или изменившиеся с прошлого сбора.
+
+            Args:
+                client_id (str): ID кабинета.
+
+            Returns:
+                list[str]: Список supply_id.
+        """
+        query = text("""
+            SELECT s.supply_id
+            FROM wb_supplies s
+            LEFT JOIN wb_supplies_details d ON s.supply_id = d.supply_id
+            WHERE s.client_id = :client_id
+              AND s.status_id IN (4, 5, 6)
+              AND s.supply_id IS NOT NULL
+              AND (d.supply_id IS NULL
+                   OR s.status_id IN (4, 6)
+                   OR s.updated_date IS DISTINCT FROM d.updated_date)
+        """)
+        result = self.session.execute(query, {"client_id": client_id}).fetchall()
+        return [row[0] for row in result]
+
+    @retry_on_exception()
+    def add_wb_supplies_details(self, list_details: list[DataWBSupplyDetails]) -> None:
+        """
+            Добавление и обновление в базе данных деталей поставок FBW.
+
+            Args:
+                list_details (list[DataWBSupplyDetails]): Список деталей поставок FBW.
+        """
+        def to_values(row: DataWBSupplyDetails) -> dict:
+            return {'client_id': row.client_id,
+                    'supply_id': row.supply_id,
+                    'warehouse_id': row.warehouse_id,
+                    'warehouse_name': row.warehouse_name,
+                    'actual_warehouse_id': row.actual_warehouse_id,
+                    'actual_warehouse_name': row.actual_warehouse_name,
+                    'acceptance_cost': row.acceptance_cost,
+                    'paid_acceptance_coefficient': row.paid_acceptance_coefficient,
+                    'storage_coef': row.storage_coef,
+                    'delivery_coef': row.delivery_coef,
+                    'reject_reason': row.reject_reason,
+                    'supplier_assign_name': row.supplier_assign_name,
+                    'quantity': row.quantity,
+                    'accepted_quantity': row.accepted_quantity,
+                    'unloading_quantity': row.unloading_quantity,
+                    'ready_for_sale_quantity': row.ready_for_sale_quantity,
+                    'depersonalized_quantity': row.depersonalized_quantity,
+                    'virtual_type_id': row.virtual_type_id,
+                    'updated_date': row.updated_date}
+
+        # Дедупликация по ключу конфликта: при повторе в пачке остаётся последняя версия
+        unique_rows = {row.supply_id: row for row in list_details if row.supply_id is not None}
+
+        rows = list(unique_rows.values())
+        chunk_size = 1000
+        for start in range(0, len(rows), chunk_size):
+            chunk = rows[start:start + chunk_size]
+            stmt = insert(WBSupplyDetails).values([to_values(r) for r in chunk])
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['supply_id'],
+                set_={'warehouse_id': stmt.excluded.warehouse_id,
+                      'warehouse_name': stmt.excluded.warehouse_name,
+                      'actual_warehouse_id': stmt.excluded.actual_warehouse_id,
+                      'actual_warehouse_name': stmt.excluded.actual_warehouse_name,
+                      'acceptance_cost': stmt.excluded.acceptance_cost,
+                      'paid_acceptance_coefficient': stmt.excluded.paid_acceptance_coefficient,
+                      'storage_coef': stmt.excluded.storage_coef,
+                      'delivery_coef': stmt.excluded.delivery_coef,
+                      'reject_reason': stmt.excluded.reject_reason,
+                      'supplier_assign_name': stmt.excluded.supplier_assign_name,
+                      'quantity': stmt.excluded.quantity,
+                      'accepted_quantity': stmt.excluded.accepted_quantity,
+                      'unloading_quantity': stmt.excluded.unloading_quantity,
+                      'ready_for_sale_quantity': stmt.excluded.ready_for_sale_quantity,
+                      'depersonalized_quantity': stmt.excluded.depersonalized_quantity,
+                      'virtual_type_id': stmt.excluded.virtual_type_id,
+                      'updated_date': stmt.excluded.updated_date}
+            )
+            self.session.execute(stmt)
+        self.session.commit()
+        logger.info(f"Успешное добавление в базу")
+
+    @retry_on_exception()
+    def add_wb_supplies_goods(self, list_goods: list[DataWBSupplyGoods]) -> None:
+        """
+            Добавление и обновление в базе данных товаров поставок FBW.
+
+            Args:
+                list_goods (list[DataWBSupplyGoods]): Список товаров поставок FBW.
+        """
+        def to_values(row: DataWBSupplyGoods) -> dict:
+            return {'client_id': row.client_id,
+                    'supply_id': row.supply_id,
+                    'barcode': row.barcode,
+                    'vendor_code': row.vendor_code,
+                    'sku': row.sku,
+                    'tech_size': row.tech_size,
+                    'color': row.color,
+                    'need_kiz': row.need_kiz,
+                    'supplier_box_amount': row.supplier_box_amount,
+                    'quantity': row.quantity,
+                    'accepted_quantity': row.accepted_quantity,
+                    'unloading_quantity': row.unloading_quantity,
+                    'ready_for_sale_quantity': row.ready_for_sale_quantity}
+
+        # Дедупликация по ключу конфликта: при повторе в пачке остаётся последняя версия
+        unique_rows = {(row.supply_id, row.barcode): row for row in list_goods}
+
+        rows = list(unique_rows.values())
+        chunk_size = 1000
+        for start in range(0, len(rows), chunk_size):
+            chunk = rows[start:start + chunk_size]
+            stmt = insert(WBSupplyGoods).values([to_values(r) for r in chunk])
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['supply_id', 'barcode'],
+                set_={'vendor_code': stmt.excluded.vendor_code,
+                      'sku': stmt.excluded.sku,
+                      'tech_size': stmt.excluded.tech_size,
+                      'color': stmt.excluded.color,
+                      'need_kiz': stmt.excluded.need_kiz,
+                      'supplier_box_amount': stmt.excluded.supplier_box_amount,
+                      'quantity': stmt.excluded.quantity,
+                      'accepted_quantity': stmt.excluded.accepted_quantity,
+                      'unloading_quantity': stmt.excluded.unloading_quantity,
+                      'ready_for_sale_quantity': stmt.excluded.ready_for_sale_quantity}
+            )
+            self.session.execute(stmt)
         self.session.commit()
         logger.info(f"Успешное добавление в базу")
 

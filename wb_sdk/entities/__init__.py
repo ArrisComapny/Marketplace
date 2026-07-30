@@ -23,4 +23,7 @@ from .cards_list import *
 from .chats import *
 from .message import *
 from .supplies import *
+from .supply_goods import *
 from .stocks_report_wb_warehouses import *
+from .sales_report_list import *
+from .sales_report_detailed import *

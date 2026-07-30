@@ -227,3 +227,43 @@ class DataWBSupply:
     status_id: int
     box_type_id: int
     is_box_on_pallet: bool
+
+
+@dataclass
+class DataWBSupplyDetails:
+    client_id: str
+    supply_id: str
+    warehouse_id: int
+    warehouse_name: str
+    actual_warehouse_id: int
+    actual_warehouse_name: str
+    acceptance_cost: float
+    paid_acceptance_coefficient: float
+    storage_coef: float
+    delivery_coef: float
+    reject_reason: str
+    supplier_assign_name: str
+    quantity: int
+    accepted_quantity: int
+    unloading_quantity: int
+    ready_for_sale_quantity: int
+    depersonalized_quantity: int
+    virtual_type_id: int
+    updated_date: datetime.datetime
+
+
+@dataclass
+class DataWBSupplyGoods:
+    client_id: str
+    supply_id: str
+    barcode: str
+    vendor_code: str
+    sku: str
+    tech_size: str
+    color: str
+    need_kiz: bool
+    supplier_box_amount: int
+    quantity: int
+    accepted_quantity: int
+    unloading_quantity: int
+    ready_for_sale_quantity: int

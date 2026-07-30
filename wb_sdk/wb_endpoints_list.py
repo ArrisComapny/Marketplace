@@ -36,7 +36,11 @@ class WBAPIFactory:
         ChatsResponse: 'https://buyer-chat-api.wildberries.ru/api/v1/seller/chats',
         MessageResponse: 'https://buyer-chat-api.wildberries.ru/api/v1/seller/message',
         SuppliesResponse: 'https://supplies-api.wildberries.ru/api/v1/supplies',
+        SupplyDetailsResponse: 'https://supplies-api.wildberries.ru/api/v1/supplies/{ID}',
+        SupplyGoodsResponse: 'https://supplies-api.wildberries.ru/api/v1/supplies/{ID}/goods',
         StocksReportWbWarehousesResponse: 'https://seller-analytics-api.wildberries.ru/api/analytics/v1/stocks-report/wb-warehouses',
+        SalesReportsListResponse: 'https://finance-api.wildberries.ru/api/finance/v1/sales-reports/list',
+        SalesReportsDetailedResponse: 'https://finance-api.wildberries.ru/api/finance/v1/sales-reports/detailed/{reportId}',
     }
 
     def __init__(self, engine: WBAsyncEngine):
