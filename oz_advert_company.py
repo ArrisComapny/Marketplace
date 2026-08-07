@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 async def add_adverts(db_conn: OzDbConnection, client_id: str, performance_id: str, client_secret: str,
-                      from_date: date) -> None:
+                      from_date: date, name: str = '') -> None:
     """
         Обновление записей данных РК и бюджета РК за указанную дату.
 
@@ -68,12 +68,12 @@ async def add_adverts(db_conn: OzDbConnection, client_id: str, performance_id: s
                                          start_time=start_time,
                                          end_time=end_time))
 
-    logger.info(f"Обновление информации о рекламных компаний")
-    db_conn.add_oz_adverts(client_id=client_id, adverts_list=adverts_list)
-    logger.info(f"Добавление данных по бюджетам РК")
+    logger.info(f"{name} Обновление информации о рекламных компаний")
+    db_conn.add_oz_adverts(client_id=client_id, adverts_list=adverts_list, name=name)
+    logger.info(f"{name} Добавление данных по бюджетам РК")
     company_ids = db_conn.get_oz_adverts_id(client_id=client_id)
     daily_budget = [row for row in adverts_daily_budget if row.advert_id in company_ids]
-    db_conn.add_oz_adverts_daily_budget(date=from_date, adverts_daily_budget=daily_budget)
+    db_conn.add_oz_adverts_daily_budget(date=from_date, adverts_daily_budget=daily_budget, name=name)
 
 
 async def get_products_ids(client_id: str, api_key: str) -> list[str]:
@@ -112,7 +112,7 @@ async def get_products_ids(client_id: str, api_key: str) -> list[str]:
     return list_product_ids
 
 
-async def add_card_products(db_conn: OzDbConnection, client_id: str, api_key: str) -> None:
+async def add_card_products(db_conn: OzDbConnection, client_id: str, api_key: str, name: str = '') -> None:
     """
         Обновление записей в таблице `oz_card_product` за указанную дату.
 
@@ -172,12 +172,12 @@ async def add_card_products(db_conn: OzDbConnection, client_id: str, api_key: st
                                                            discount_price=discount_price,
                                                            created_at=created_at))
 
-    logger.info(f"Обновление информации о карточках товаров")
-    db_conn.add_oz_cards_products(list_card_product=list_card_product)
+    logger.info(f"{name} Обновление информации о карточках товаров")
+    db_conn.add_oz_cards_products(list_card_product=list_card_product, name=name)
 
 
 async def add_statistics_card_products(db_conn: OzDbConnection, client_id: str, api_key: str,
-                                       date_yesterday: date) -> None:
+                                       date_yesterday: date, name: str = '') -> None:
     """
         Получение списка статистики карточек товара за указанную дату.
 
@@ -325,12 +325,12 @@ async def add_statistics_card_products(db_conn: OzDbConnection, client_id: str, 
             cancel_count=cancel_count
         ))
 
-    logger.info(f"Количество записей: {len(list_statistics_card_products)}")
-    db_conn.add_oz_statistics_card_products(list_card_product=list_statistics_card_products)
+    logger.info(f"{name} Количество записей: {len(list_statistics_card_products)}")
+    db_conn.add_oz_statistics_card_products(list_card_product=list_statistics_card_products, name=name)
 
 
 async def add_statistic_adverts(db_conn: OzDbConnection, client_id: str, performance_id: str, client_secret: str,
-                                from_date: date) -> None:
+                                from_date: date, name: str = '') -> None:
     """
         Добавление статистики карточек товара за указанную дату.
 
@@ -486,8 +486,8 @@ async def add_statistic_adverts(db_conn: OzDbConnection, client_id: str, perform
                                                             orders_count=orders_count,
                                                             sum_price=sum_price))
 
-    logger.info(f"Количество записей: {len(list_statistics_advert)}")
-    db_conn.add_oz_statistics_adverts(list_statistics_advert=list_statistics_advert)
+    logger.info(f"{name} Количество записей: {len(list_statistics_advert)}")
+    db_conn.add_oz_statistics_adverts(list_statistics_advert=list_statistics_advert, name=name)
 
 readiness_check = {}
 check_func = {'cards': False, 'adverts': False, 'stat_cards': False, 'stat_adverts': False}
@@ -501,7 +501,8 @@ async def statistic(db_conn: OzDbConnection, client: Type[Client], date_yesterda
         performance = db_conn.get_oz_performance(client_id=client.client_id)
 
         if not readiness_check[client.name_company]['cards']:
-            await add_card_products(db_conn=db_conn, client_id=client.client_id, api_key=client.api_key)
+            await add_card_products(db_conn=db_conn, client_id=client.client_id, api_key=client.api_key,
+                                    name=client.name_company)
             readiness_check[client.name_company]['cards'] = True
             logger.info(f"Сбор карточек товаров {client.name_company}")
 
@@ -510,26 +511,29 @@ async def statistic(db_conn: OzDbConnection, client: Type[Client], date_yesterda
                               client_id=client.client_id,
                               performance_id=performance.performance_id,
                               client_secret=performance.client_secret,
-                              from_date=date_yesterday)
+                              from_date=date_yesterday,
+                              name=client.name_company)
             readiness_check[client.name_company]['adverts'] = True
-            logger.info(f"{client.name_company} Сбор рекламных компаний {client.name_company}")
+            logger.info(f"Сбор рекламных компаний {client.name_company}")
 
         if not readiness_check[client.name_company]['stat_cards']:
             await add_statistics_card_products(db_conn=db_conn,
                                                client_id=client.client_id,
                                                api_key=client.api_key,
-                                               date_yesterday=date_yesterday)
+                                               date_yesterday=date_yesterday,
+                                               name=client.name_company)
             readiness_check[client.name_company]['stat_cards'] = True
-            logger.info(f"{client.name_company} Статистика карточек товара за {date_yesterday.isoformat()}")
+            logger.info(f"Статистика карточек товара за {date_yesterday.isoformat()}")
 
         if not readiness_check[client.name_company]['stat_adverts']:
             await add_statistic_adverts(db_conn=db_conn,
                                         client_id=client.client_id,
                                         performance_id=performance.performance_id,
                                         client_secret=performance.client_secret,
-                                        from_date=date_yesterday)
+                                        from_date=date_yesterday,
+                                        name=client.name_company)
             readiness_check[client.name_company]['stat_adverts'] = True
-            logger.info(f"{client.name_company} Статистика рекламы за {date_yesterday.isoformat()}")
+            logger.info(f"Статистика рекламы за {date_yesterday.isoformat()}")
 
         if all(readiness_check[client.name_company].values()):
             readiness_check.pop(client.name_company)
@@ -554,12 +558,20 @@ async def main_oz_advert(retries: int = 6) -> None:
 
         date_yesterday = (datetime.now() - timedelta(days=1)).date()
 
+        # Не более 5 кабинетов параллельно (лимит Ozon Performance:
+        # 5 одновременных выгрузок статистики на организацию).
+        semaphore = asyncio.Semaphore(5)
+
+        async def statistic_limited(client):
+            async with semaphore:
+                await statistic(db_conn=db_conn, client=client, date_yesterday=date_yesterday)
+
         tasks = []
 
         for client in clients:
             if client.name_company not in readiness_check.keys():
                 continue
-            tasks.append(statistic(db_conn=db_conn, client=client, date_yesterday=date_yesterday))
+            tasks.append(statistic_limited(client))
 
         await asyncio.gather(*tasks)
 

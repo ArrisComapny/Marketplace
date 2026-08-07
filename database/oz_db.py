@@ -95,7 +95,7 @@ class OzDbConnection(DbConnection):
         logger.info(f"Успешное добавление в базу")
 
     @retry_on_exception()
-    def add_oz_adverts(self, client_id: str, adverts_list: list[DataOzAdvert]) -> None:
+    def add_oz_adverts(self, client_id: str, adverts_list: list[DataOzAdvert], name: str = '') -> None:
         """
             Обновление информации о рекламных компаниях.
 
@@ -120,10 +120,10 @@ class OzDbConnection(DbConnection):
                             end_time=row.end_time)
             self.session.merge(new)
         self.session.commit()
-        logger.info(f"Успешное добавление в базу")
+        logger.info(f"Успешное добавление в базу {name}")
 
     @retry_on_exception()
-    def add_oz_cards_products(self, list_card_product: list[DataOzProductCard]) -> None:
+    def add_oz_cards_products(self, list_card_product: list[DataOzProductCard], name: str = '') -> None:
         """
             Обновление информации о карточках товаров.
 
@@ -142,10 +142,10 @@ class OzDbConnection(DbConnection):
                                 created_at=row.created_at)
             self.session.merge(new)
         self.session.commit()
-        logger.info(f"Успешное добавление в базу")
+        logger.info(f"Успешное добавление в базу {name}")
 
     @retry_on_exception()
-    def add_oz_statistics_card_products(self, list_card_product: list[DataOzStatisticCardProduct]) -> None:
+    def add_oz_statistics_card_products(self, list_card_product: list[DataOzStatisticCardProduct], name: str = '') -> None:
         """
             Добавление в базу данных записей по статистики карточек товаров.
 
@@ -182,10 +182,10 @@ class OzDbConnection(DbConnection):
             )
             self.session.execute(stmt)
         self.session.commit()
-        logger.info(f"Успешное добавление в базу")
+        logger.info(f"Успешное добавление в базу {name}")
 
     @retry_on_exception()
-    def add_oz_statistics_adverts(self, list_statistics_advert: list[DataOzStatisticAdvert]) -> None:
+    def add_oz_statistics_adverts(self, list_statistics_advert: list[DataOzStatisticAdvert], name: str = '') -> None:
         """
             Добавление в базу данных записей по статистики РК.
 
@@ -212,11 +212,11 @@ class OzDbConnection(DbConnection):
             )
             self.session.execute(stmt)
         self.session.commit()
-        logger.info(f"Успешное добавление в базу")
+        logger.info(f"Успешное добавление в базу {name}")
 
     @retry_on_exception()
     def add_oz_adverts_daily_budget(self, date: datetime.date,
-                                    adverts_daily_budget: list[DataOzAdvertDailyBudget]) -> None:
+                                    adverts_daily_budget: list[DataOzAdvertDailyBudget], name: str = '') -> None:
         """
             Добавление в базу данных записей по бюджету РК.
 
@@ -235,7 +235,7 @@ class OzDbConnection(DbConnection):
             )
             self.session.execute(stmt)
         self.session.commit()
-        logger.info(f"Успешное добавление в базу")
+        logger.info(f"Успешное добавление в базу {name}")
 
     @retry_on_exception()
     def add_storage_entry(self, list_storage: list[DataOzStorage]) -> None:
