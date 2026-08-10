@@ -33,6 +33,7 @@ class FBSOrders(BaseEntity):
     skus: list[str] = []
     id_field: int = Field(default=None, alias='id')
     warehouseId: int = None
+    officeId: int = None
     nmId: int = None
     chrtId: int = None
     price: int = None
@@ -40,6 +41,7 @@ class FBSOrders(BaseEntity):
     currencyCode: int = None
     convertedCurrencyCode: int = None
     cargoType: int = None
+    crossBorderType: int = None
     comment: str = None
-    isZeroOrder: Any = None
+    isZeroOrder: bool = None
     options: FBSOrdersOptions = None

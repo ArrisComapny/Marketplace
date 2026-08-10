@@ -31,6 +31,7 @@ class WBApi:
         self._warehouse_remains_tasks_download_api = self._api_factory.get_api(WarehouseRemainsTasksDownloadResponse)
         self._supplier_stocks_api = self._api_factory.get_api(SupplierStocksResponse)
         self._fbs_orders_api = self._api_factory.get_api(FBSOrdersResponse)
+        self._fbs_orders_status_api = self._api_factory.get_api(FBSOrdersStatusResponse)
         self._fbs_warehouses_api = self._api_factory.get_api(FBSWarehousesResponse)
         self._fbs_supply_api = self._api_factory.get_api(FBSSupplyResponse)
         self._fbs_stocks_api = self._api_factory.get_api(FBSStocksResponse)
@@ -375,6 +376,12 @@ class WBApi:
 
         return answer
 
+    async def get_fbs_status_orders(self, orders: list[int]) -> FBSOrdersStatusResponse:
+        request = FBSOrdersStatusRequest(orders=orders)
+        answer: FBSOrdersStatusResponse = await self._fbs_orders_status_api.post(body=request)
+
+        return answer
+
     async def get_fbs_warehouses(self) -> FBSWarehousesResponse:
         request = FBSWarehousesRequest()
         answer: FBSWarehousesResponse = await self._fbs_warehouses_api.get(query=request)
@@ -387,8 +394,8 @@ class WBApi:
 
         return answer
 
-    async def get_fbs_stocks(self, warehouse_id: str, skus: list[str]) -> FBSStocksResponse:
-        request = FBSStocksRequest(skus=skus)
+    async def get_fbs_stocks(self, warehouse_id: str, chrt_ids: list[int]) -> FBSStocksResponse:
+        request = FBSStocksRequest(chrtIds=chrt_ids)
         answer: FBSStocksResponse = await self._fbs_stocks_api.post(body=request,
                                                                     format_dict={'warehouseId': warehouse_id})
 

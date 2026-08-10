@@ -29,6 +29,7 @@ class WBAPIFactory:
         WarehouseRemainsTasksDownloadResponse: 'https://seller-analytics-api.wildberries.ru/api/v1/warehouse_remains/tasks/{task_id}/download',
         SupplierStocksResponse: 'https://statistics-api.wildberries.ru/api/v1/supplier/stocks',
         FBSOrdersResponse: 'https://marketplace-api.wildberries.ru/api/v3/orders',
+        FBSOrdersStatusResponse: 'https://marketplace-api.wildberries.ru/api/v3/orders/status',
         FBSWarehousesResponse: 'https://marketplace-api.wildberries.ru/api/v3/warehouses',
         FBSSupplyResponse: 'https://marketplace-api.wildberries.ru/api/v3/supplies/{supplyId}',
         FBSStocksResponse: 'https://marketplace-api.wildberries.ru/api/v3/stocks/{warehouseId}',
