@@ -10,3 +10,5 @@ class FBSWarehouses(BaseEntity):
     id_field: int = Field(default=None, alias='id')
     cargoType: int = None
     deliveryType: int = None
+    isDeleting: bool = None
+    isProcessing: bool = None

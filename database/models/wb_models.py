@@ -356,6 +356,7 @@ class WBOrderFBS(Base):
     __tablename__ = 'wb_fbs_orders'
 
     id = Column(Integer, Identity(), primary_key=True)
+    order_id = Column(String(length=255), nullable=False)
     supply_id = Column(String(length=255), nullable=False)
     client_id = Column(String(length=255), ForeignKey('clients.client_id'), nullable=False)
     warehouse_id = Column(String(length=255), nullable=False)
@@ -364,9 +365,10 @@ class WBOrderFBS(Base):
     vendor_code = Column(String(length=255), nullable=False)
     sku = Column(String(length=255), nullable=False)
     barcodes = Column(ARRAY(String), default=list, nullable=False)
+    status = Column(String(length=255), nullable=True)
 
     __table_args__ = (
-        UniqueConstraint('warehouse_id', 'posting_number', name='wb_fbs_orders_unique'),
+        UniqueConstraint('order_id', 'client_id', name='wb_fbs_orders_unique'),
     )
 
 
@@ -378,8 +380,8 @@ class WBWarehouseFBS(Base):
     client_id = Column(String(length=255), ForeignKey('clients.client_id'), nullable=False)
     name = Column(String(length=255), nullable=False)
     office_id = Column(String(length=255), nullable=False)
-    cargo_type = Column(Integer, nullable=False)
-    delivery_type = Column(Integer, nullable=False)
+    cargo_type = Column(String(length=255), nullable=False)
+    delivery_type = Column(String(length=255), nullable=False)
 
 
 class WBSupplyFBS(Base):
@@ -393,7 +395,7 @@ class WBSupplyFBS(Base):
     closed_at = Column(DateTime, nullable=True)
     scan_dt = Column(DateTime, nullable=True)
     name = Column(String(length=255), nullable=False)
-    cargo_type = Column(Integer, nullable=False)
+    cargo_type = Column(String(length=255), nullable=False)
 
 
 class WBStockFBS(Base):

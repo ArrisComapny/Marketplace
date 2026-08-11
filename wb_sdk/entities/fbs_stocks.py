@@ -3,6 +3,6 @@ from .base import BaseEntity
 
 class FBSStocks(BaseEntity):
     """Остатки на складе FBS."""
-    sku: str = None
+    chrtId: int = None
     amount: int = None
 

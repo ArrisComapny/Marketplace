@@ -17,6 +17,7 @@ from .warehouse_remains_tasks_download import *
 from .supplier_stocks import *
 from .analytics_acceptance_report_download import *
 from .fbs_orders import *
+from .fbs_orders_status import *
 from .fbs_warehouses import *
 from .fbs_stocks import *
 from .cards_list import *

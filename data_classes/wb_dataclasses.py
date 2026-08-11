@@ -172,6 +172,7 @@ class DataWBStock:
 
 @dataclass
 class DataWBOrderFBS:
+    order_id: str
     supply_id: str
     client_id: str
     warehouse_id: str
@@ -180,6 +181,7 @@ class DataWBOrderFBS:
     vendor_code: str
     sku: str
     barcodes: list[str]
+    status: str
 
 
 @dataclass
@@ -188,8 +190,8 @@ class DataWBWarehouseFBS:
     name: str
     office_id: str
     warehouse_id: str
-    cargo_type: int
-    delivery_type: int
+    cargo_type: str
+    delivery_type: str
 
 
 @dataclass
@@ -201,7 +203,7 @@ class DataWBSupplyFBS:
     closed_at: datetime.datetime
     scan_dt: datetime.datetime
     name: str
-    cargo_type: int
+    cargo_type: str
 
 
 @dataclass
