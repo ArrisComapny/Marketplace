@@ -167,64 +167,64 @@ async def add_wb_fbs_supplies_entry(db_conn: WBDbConnection, client_id: str, api
     db_conn.add_wb_fbs_supplies(list_supplies=list_supplies)
 
 
-async def add_wb_fbs_stock_entry(db_conn: WBDbConnection, client_id: str, api_key: str) -> None:
-    """
-        Получаем данные об остатках на складах FBS по указанному клиенту.
-
-        Args:
-            db_conn (WBDbConnection): Объект соединения с базой данных.
-            client_id (str): ID кабинета.
-            api_key (str): API KEY кабинета.
-    """
-
-    list_stocks = []
-
-    # Инициализация API-клиента WB
-    api_user = WBApi(api_key=api_key)
-
-    # Справочник chrtID (ID размера) -> (баркод, артикул продавца) из карточек товара:
-    # метод остатков принимает и возвращает chrtId, в базу пишем баркод
-    chrt_info = {}
-    updated_at, nm_id, limit = None, None, 100
-    while True:
-        answer_cards = await api_user.get_cards_list(updated_at=updated_at, nm_id=nm_id, limit=limit)
-        if not answer_cards or not answer_cards.cards:
-            break
-        for card in answer_cards.cards:
-            for size in card.sizes:
-                if size.chrtID is None:
-                    continue
-                barcode = size.skus[0] if size.skus else None
-                chrt_info[size.chrtID] = (barcode, card.vendorCode)
-        if len(answer_cards.cards) < limit:
-            break
-        updated_at, nm_id = answer_cards.cursor.updatedAt, answer_cards.cursor.nmID
-
-    if not chrt_info:
-        logger.info("Карточки товара не найдены")
-        return
-
-    chrt_ids = list(chrt_info.keys())
-
-    answer_warehouses = await api_user.get_fbs_warehouses()
-
-    for warehouse in answer_warehouses.result:
-        warehouse_id = str(warehouse.id_field)
-        for start in range(0, len(chrt_ids), 1000):
-            chunk = chrt_ids[start:start + 1000]
-            answer = await api_user.get_fbs_stocks(warehouse_id=warehouse_id, chrt_ids=chunk)
-            for stock in answer.stocks:
-                barcode, vendor_code = chrt_info.get(stock.chrtId, ('', ''))
-                if stock.amount:
-                    list_stocks.append(DataWBStockFBS(client_id=client_id,
-                                                      warehouse_id=warehouse_id,
-                                                      date=date.today(),
-                                                      barcode=barcode,
-                                                      vendor_code=vendor_code,
-                                                      count=stock.amount))
-
-    logger.info(f"Количество записей: {len(list_stocks)}")
-    db_conn.add_wb_fbs_stocks(list_stocks=list_stocks)
+# async def add_wb_fbs_stock_entry(db_conn: WBDbConnection, client_id: str, api_key: str) -> None:
+#     """
+#         Получаем данные об остатках на складах FBS по указанному клиенту.
+#
+#         Args:
+#             db_conn (WBDbConnection): Объект соединения с базой данных.
+#             client_id (str): ID кабинета.
+#             api_key (str): API KEY кабинета.
+#     """
+#
+#     list_stocks = []
+#
+#     # Инициализация API-клиента WB
+#     api_user = WBApi(api_key=api_key)
+#
+#     # Справочник chrtID (ID размера) -> (баркод, артикул продавца) из карточек товара:
+#     # метод остатков принимает и возвращает chrtId, в базу пишем баркод
+#     chrt_info = {}
+#     updated_at, nm_id, limit = None, None, 100
+#     while True:
+#         answer_cards = await api_user.get_cards_list(updated_at=updated_at, nm_id=nm_id, limit=limit)
+#         if not answer_cards or not answer_cards.cards:
+#             break
+#         for card in answer_cards.cards:
+#             for size in card.sizes:
+#                 if size.chrtID is None:
+#                     continue
+#                 barcode = size.skus[0] if size.skus else None
+#                 chrt_info[size.chrtID] = (barcode, card.vendorCode)
+#         if len(answer_cards.cards) < limit:
+#             break
+#         updated_at, nm_id = answer_cards.cursor.updatedAt, answer_cards.cursor.nmID
+#
+#     if not chrt_info:
+#         logger.info("Карточки товара не найдены")
+#         return
+#
+#     chrt_ids = list(chrt_info.keys())
+#
+#     answer_warehouses = await api_user.get_fbs_warehouses()
+#
+#     for warehouse in answer_warehouses.result:
+#         warehouse_id = str(warehouse.id_field)
+#         for start in range(0, len(chrt_ids), 1000):
+#             chunk = chrt_ids[start:start + 1000]
+#             answer = await api_user.get_fbs_stocks(warehouse_id=warehouse_id, chrt_ids=chunk)
+#             for stock in answer.stocks:
+#                 barcode, vendor_code = chrt_info.get(stock.chrtId, ('', ''))
+#                 if stock.amount:
+#                     list_stocks.append(DataWBStockFBS(client_id=client_id,
+#                                                       warehouse_id=warehouse_id,
+#                                                       date=date.today(),
+#                                                       barcode=barcode,
+#                                                       vendor_code=vendor_code,
+#                                                       count=stock.amount))
+#
+#     logger.info(f"Количество записей: {len(list_stocks)}")
+#     db_conn.add_wb_fbs_stocks(list_stocks=list_stocks)
 
 
 async def main_fbs_orders_wb(retries: int = 6) -> None:
@@ -257,13 +257,13 @@ async def main_fbs_orders_wb(retries: int = 6) -> None:
                                                 api_key=client.api_key)
             except ClientError as e:
                 logger.error(f'{e}')
-            try:
-                logger.info(f"Обновляем информацию об остатках на складах FBS компании {client.name_company}")
-                await add_wb_fbs_stock_entry(db_conn=db_conn,
-                                             client_id=client.client_id,
-                                             api_key=client.api_key)
-            except ClientError as e:
-                logger.error(f'{e}')
+            # try:
+            #     logger.info(f"Обновляем информацию об остатках на складах FBS компании {client.name_company}")
+            #     await add_wb_fbs_stock_entry(db_conn=db_conn,
+            #                                  client_id=client.client_id,
+            #                                  api_key=client.api_key)
+            # except ClientError as e:
+            #     logger.error(f'{e}')
     except OperationalError:
         logger.error(f'Не доступна база данных. Осталось попыток подключения: {retries - 1}')
         if retries > 0:
