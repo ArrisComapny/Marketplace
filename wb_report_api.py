@@ -1,7 +1,10 @@
 import sys
+import time
 import asyncio
 import nest_asyncio
 import logging
+
+import requests
 
 from datetime import datetime, timedelta, timezone, date
 from sqlalchemy.exc import OperationalError
@@ -11,6 +14,7 @@ from wb_sdk.wb_api import WBApi
 from wb_sdk.entities import SalesReportDetailed
 from database import WBDbConnection
 from data_classes import DataWBReport
+from config import TOKEN, CHAT_ID_WB_REPORT
 
 nest_asyncio.apply()
 
@@ -23,6 +27,69 @@ LIST_LIMIT = 1000
 DETAILED_LIMIT = 100000
 
 MSK = timezone(timedelta(hours=3))
+
+# --- Telegram-алерты по штрафам/удержаниям (как в браузерном сборщике WB_report) ---
+TG_URL = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+ALERT_OPERATIONS = ("Штраф",)     # какие операции считаем алертами
+ALERT_LOUD_THRESHOLD = 1000       # от этой суммы шлём со звуком и ‼️
+
+
+def request_telegram(mes: str, disable_notification: bool = False) -> None:
+    for _ in range(3):
+        try:
+            response = requests.post(
+                TG_URL,
+                data={
+                    "chat_id": CHAT_ID_WB_REPORT,
+                    "text": mes,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                    "disable_notification": disable_notification,
+                },
+                timeout=30,
+            )
+            if response.status_code == 200:
+                return
+            logger.error(f"Telegram ответил {response.status_code}, повтор через 20 сек")
+        except requests.RequestException as e:
+            logger.error(f"Ошибка отправки в Telegram: {e}, повтор через 20 сек")
+        time.sleep(20)
+    logger.error(f"Не удалось отправить сообщение в Telegram: {mes}")
+
+
+def post_alerts(name_company: str, entrepreneur: str, report_date: date,
+                list_report: list[DataWBReport]) -> None:
+    """Шлёт в Telegram сводку по штрафам/удержаниям из отчёта кабинета."""
+    try:
+        alerts: dict = {}
+        for row in list_report:
+            if row.supplier_oper_name in ALERT_OPERATIONS and (row.deduction or row.penalty):
+                alerts.setdefault(row.supplier_oper_name, {})
+                alerts[row.supplier_oper_name].setdefault(row.bonus_type_name, 0)
+                alerts[row.supplier_oper_name][row.bonus_type_name] += row.deduction or row.penalty
+
+        if not alerts:
+            return
+
+        disable_notification = True
+        text = f"*{entrepreneur} \"{name_company}\"* — отчёт за {report_date.isoformat()}\n\n"
+        for alert in sorted(alerts.keys()):
+            alert_types = alerts.get(alert)
+            if not alert_types:
+                continue
+            text += f"*{alert}:*\n"
+            for alert_type in sorted(alert_types.keys(), key=lambda x: str(x)):
+                cost = alert_types.get(alert_type, 0)
+                if cost:
+                    if cost >= ALERT_LOUD_THRESHOLD:
+                        text += "‼️ "
+                        disable_notification = False
+                    text += f"{alert_type}: *{round(cost, 2)}*\n"
+            text += "\n"
+
+        request_telegram(text, disable_notification)
+    except Exception as e:
+        logger.error(f"При отправке сообщения в Telegram произошла непредвиденная ошибка: {str(e)}")
 
 
 def to_msk_date(value: datetime) -> date:
@@ -108,7 +175,7 @@ def entity_to_data(row: SalesReportDetailed, operation_date: date) -> DataWBRepo
 
 
 async def get_report_daily(db_conn: WBDbConnection, client_id: str, name_company: str, api_key: str,
-                           date_from: datetime, date_to: datetime) -> None:
+                           date_from: datetime, date_to: datetime, entrepreneur: str = '') -> None:
     """
         Получает ежедневные детализированные отчёты из finance-api за период
         и сохраняет их в таблицу wb_report_daily.
@@ -187,6 +254,10 @@ async def get_report_daily(db_conn: WBDbConnection, client_id: str, name_company
                                           realizationreport_id=str(report.reportId),
                                           list_report=list_report)
 
+        # Telegram-алерт по штрафам/удержаниям из этого отчёта
+        post_alerts(name_company=name_company, entrepreneur=entrepreneur,
+                    report_date=report.dateFrom, list_report=list_report)
+
 
 async def main_wb_report_api(retries: int = 6) -> None:
     try:
@@ -213,7 +284,8 @@ async def main_wb_report_api(retries: int = 6) -> None:
                                        name_company=client.name_company,
                                        api_key=client.api_key,
                                        date_from=date_from,
-                                       date_to=date_to)
+                                       date_to=date_to,
+                                       entrepreneur=client.entrepreneur)
             except ClientError as e:
                 logger.error(f"{client.name_company}: {e}")
 
