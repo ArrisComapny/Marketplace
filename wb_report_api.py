@@ -57,7 +57,8 @@ def request_telegram(mes: str, disable_notification: bool = False) -> None:
     logger.error(f"Не удалось отправить сообщение в Telegram: {mes}")
 
 
-def post_alerts(name_company: str, report_date: date, list_report: list[DataWBReport]) -> None:
+def post_alerts(name_company: str, entrepreneur: str, report_date: date,
+                list_report: list[DataWBReport]) -> None:
     """Шлёт в Telegram сводку по штрафам/удержаниям из отчёта кабинета."""
     try:
         alerts: dict = {}
@@ -71,7 +72,7 @@ def post_alerts(name_company: str, report_date: date, list_report: list[DataWBRe
             return
 
         disable_notification = True
-        text = f"*{name_company}* — отчёт за {report_date.isoformat()}\n\n"
+        text = f"*{entrepreneur} \"{name_company}\"* — отчёт за {report_date.isoformat()}\n\n"
         for alert in sorted(alerts.keys()):
             alert_types = alerts.get(alert)
             if not alert_types:
@@ -174,7 +175,7 @@ def entity_to_data(row: SalesReportDetailed, operation_date: date) -> DataWBRepo
 
 
 async def get_report_daily(db_conn: WBDbConnection, client_id: str, name_company: str, api_key: str,
-                           date_from: datetime, date_to: datetime) -> None:
+                           date_from: datetime, date_to: datetime, entrepreneur: str = '') -> None:
     """
         Получает ежедневные детализированные отчёты из finance-api за период
         и сохраняет их в таблицу wb_report_daily.
@@ -254,7 +255,8 @@ async def get_report_daily(db_conn: WBDbConnection, client_id: str, name_company
                                           list_report=list_report)
 
         # Telegram-алерт по штрафам/удержаниям из этого отчёта
-        post_alerts(name_company=name_company, report_date=report.dateFrom, list_report=list_report)
+        post_alerts(name_company=name_company, entrepreneur=entrepreneur,
+                    report_date=report.dateFrom, list_report=list_report)
 
 
 async def main_wb_report_api(retries: int = 6) -> None:
@@ -282,7 +284,8 @@ async def main_wb_report_api(retries: int = 6) -> None:
                                        name_company=client.name_company,
                                        api_key=client.api_key,
                                        date_from=date_from,
-                                       date_to=date_to)
+                                       date_to=date_to,
+                                       entrepreneur=client.entrepreneur)
             except ClientError as e:
                 logger.error(f"{client.name_company}: {e}")
 
