@@ -31,6 +31,7 @@ MSK = timezone(timedelta(hours=3))
 # --- Telegram-алерты по штрафам/удержаниям (как в браузерном сборщике WB_report) ---
 TG_URL = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 ALERT_OPERATIONS = ("Штраф",)     # какие операции считаем алертами
+ALERT_MIN_THRESHOLD = 100         # штрафы меньше этой суммы не отправляем
 ALERT_LOUD_THRESHOLD = 1000       # от этой суммы шлём со звуком и ‼️
 
 
@@ -72,21 +73,27 @@ def post_alerts(name_company: str, entrepreneur: str, report_date: date,
             return
 
         disable_notification = True
-        text = f"*{entrepreneur} \"{name_company}\"* — отчёт за {report_date.isoformat()}\n\n"
+        body = ""
         for alert in sorted(alerts.keys()):
             alert_types = alerts.get(alert)
             if not alert_types:
                 continue
-            text += f"*{alert}:*\n"
+            block = ""
             for alert_type in sorted(alert_types.keys(), key=lambda x: str(x)):
                 cost = alert_types.get(alert_type, 0)
-                if cost:
-                    if cost >= ALERT_LOUD_THRESHOLD:
-                        text += "‼️ "
-                        disable_notification = False
-                    text += f"{alert_type}: *{round(cost, 2)}*\n"
-            text += "\n"
+                if cost < ALERT_MIN_THRESHOLD:   # мелкие штрафы (<100 руб.) отсекаем
+                    continue
+                if cost >= ALERT_LOUD_THRESHOLD:
+                    block += "‼️ "
+                    disable_notification = False
+                block += f"{alert_type}: *{round(cost, 2)}*\n"
+            if block:
+                body += f"*{alert}:*\n{block}\n"
 
+        if not body:                             # всё меньше порога — не шлём вообще
+            return
+
+        text = f"*{entrepreneur} \"{name_company}\"* — отчёт за {report_date.isoformat()}\n\n{body}"
         request_telegram(text, disable_notification)
     except Exception as e:
         logger.error(f"При отправке сообщения в Telegram произошла непредвиденная ошибка: {str(e)}")
