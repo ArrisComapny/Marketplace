@@ -129,3 +129,11 @@ class DataPlanSale:
     profit_proc: float
     profit: float
     supplies: Union[int, str]
+
+@dataclass
+class DataInventory:
+    id_inventory: str
+    date: datetime.date
+    vendor_code: str
+    quantity: int
+

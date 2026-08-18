@@ -126,3 +126,17 @@ class SalesPlan(Base):
     __table_args__ = (
         PrimaryKeyConstraint('date', 'vendor_code'),
     )
+
+class Inventory(Base):
+    """Модель таблицы inventory."""
+    __tablename__ = 'inventory'
+
+    id = Column(Integer, Identity(), primary_key=True)
+    id_inventory = Column(String, nullable=False)
+    date = Column(Date, nullable=False)
+    vendor_code = Column(String(length=255), nullable=False)
+    quantity = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('date', 'vendor_code', name='inventory_unique'),
+    )

@@ -159,6 +159,35 @@ class DbConnection:
         return {row[0]: (row[1], row[2]) for row in result}
 
     @retry_on_exception()
+    def get_ip_vendor_codes(self) -> list[tuple]:
+        """
+            Получает справочник артикулов из ip_vendor_code.
+
+            Returns:
+                List[tuple]: vendor_code, main_vendor_code, type_of_vendor_code, group, marker.
+        """
+        query = text("""
+        SELECT vendor_code, main_vendor_code, type_of_vendor_code, "group", marker
+        FROM ip_vendor_code
+        """)
+        return self.session.execute(query).fetchall()
+
+    @retry_on_exception()
+    def get_inventory_stocks(self) -> list[tuple]:
+        """
+            Получает данные представления inventory_stocks.
+
+            Returns:
+                List[tuple]: id_inventory, date, entrepreneur, vendor_code, quantity.
+        """
+        query = text("""
+        SELECT id_inventory, date, entrepreneur, vendor_code, quantity
+        FROM inventory_stocks
+        ORDER BY date, (entrepreneur <> 'Склад'), entrepreneur, vendor_code
+        """)
+        return self.session.execute(query).fetchall()
+
+    @retry_on_exception()
     def get_plan_sale(self) -> list[DataPlanSale]:
         """
             Получает данные по плану продаж из БД.
@@ -623,6 +652,23 @@ class DbConnection:
                 date=row.date,
                 vendor_code=row.vendor_code,
                 supplies=row.supplies
+            )
+            self.session.execute(stmt)
+        self.session.commit()
+        logger.info(f"Успешное добавление в базу")
+
+    @retry_on_exception()
+    def add_inventory(self, list_inventory: list[DataInventory]) -> None:
+        if not list_inventory:
+            return
+        self.session.execute(text('TRUNCATE TABLE inventory RESTART IDENTITY'))
+        self.session.commit()
+        for row in list_inventory:
+            stmt = insert(Inventory).values(
+                id_inventory=row.id_inventory,
+                date=row.date,
+                vendor_code=row.vendor_code,
+                quantity=row.quantity
             )
             self.session.execute(stmt)
         self.session.commit()

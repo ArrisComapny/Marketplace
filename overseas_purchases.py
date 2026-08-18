@@ -184,7 +184,7 @@ def get_values_market(to_date: datetime.date) -> list:
     entry = []
 
     for val in data:
-        if len(val) >= 8 and all(val[i].strip() for i in (0, 1, 6, 7)):
+        if len(val) >= 9 and all(val[i].strip() for i in (0, 1, 7, 8)):
             try:
                 date_obj = datetime.datetime.strptime(val[0].strip(), "%d.%m.%Y").date()
 
@@ -192,8 +192,8 @@ def get_values_market(to_date: datetime.date) -> list:
                     continue
 
                 vendor_code = val[1].lower().strip()
-                quantities = int(re.sub(r'[^\d,]', '', val[6]))
-                cleaned_price = re.sub(r'[^\d,]', '', val[7])
+                quantities = int(re.sub(r'[^\d,]', '', val[7]))
+                cleaned_price = re.sub(r'[^\d,]', '', val[8])
                 price = round(float(cleaned_price.replace(',', '.')), 2)
                 entry.append([date_obj, vendor_code, quantities, price])
             except Exception as e:
