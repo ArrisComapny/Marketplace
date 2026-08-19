@@ -192,7 +192,7 @@ def get_values_market(to_date: datetime.date) -> list:
                     continue
 
                 vendor_code = val[1].lower().strip()
-                quantities = int(re.sub(r'[^\d,]', '', val[7]))
+                quantities = int(re.sub(r'[^\d,-]', '', val[7]))
                 cleaned_price = re.sub(r'[^\d,]', '', val[8])
                 price = round(float(cleaned_price.replace(',', '.')), 2)
                 entry.append([date_obj, vendor_code, quantities, price])
