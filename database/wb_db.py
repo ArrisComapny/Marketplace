@@ -699,7 +699,11 @@ class WBDbConnection(DbConnection):
         for start in range(0, len(rows), chunk_size):
             chunk = rows[start:start + chunk_size]
             stmt = insert(WBOrderFBS).values([to_values(r) for r in chunk])
-            stmt = stmt.on_conflict_do_nothing(index_elements=['order_id', 'client_id'])
+            # статус и поставка меняются уже после создания заказа, поэтому перезаписываем
+            stmt = stmt.on_conflict_do_update(index_elements=['order_id', 'client_id'],
+                                              set_={'status': stmt.excluded.status,
+                                                    'supply_id': stmt.excluded.supply_id,
+                                                    'warehouse_id': stmt.excluded.warehouse_id})
             self.session.execute(stmt)
 
         self.session.commit()

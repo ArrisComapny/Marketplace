@@ -31,6 +31,10 @@ DELIVERY_TYPE = {
     6: "EDBS"
 }
 
+# Отмена покупателем видна только в wbStatus: продавец такой заказ не собирал,
+# поэтому его supplierStatus навсегда остаётся 'new'
+CANCEL_WB_STATUS = {"declined_by_client", "canceled_by_client"}
+
 async def add_wb_fbs_warehouses_entry(db_conn: WBDbConnection, client_id: str, api_key: str) -> None:
     """
         Получает список складов FBS для указанного клиента.
@@ -88,7 +92,8 @@ async def add_wb_fbs_orders_entry(db_conn: WBDbConnection, client_id: str, api_k
 
         answer_status_orders = await api_user.get_fbs_status_orders(orders=[order.id_field for order in answer_orders.orders])
 
-        status_map = {order.id_field: order.supplierStatus for order in answer_status_orders.orders}
+        status_map = {order.id_field: 'cancel' if order.wbStatus in CANCEL_WB_STATUS else order.supplierStatus
+                      for order in answer_status_orders.orders}
 
         # Обработка полученных результатов
         for order in answer_orders.orders:
