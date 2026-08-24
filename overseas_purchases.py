@@ -203,6 +203,39 @@ def get_values_market(to_date: datetime.date) -> list:
     return [dict(zip(market_columns, row)) for row in entry]
 
 
+def get_values_orders() -> list:
+    sheet_name = 'Заказы для БД'
+
+    creds = ServiceAccountCredentials.from_json_keyfile_name(PATH_JSON, SCOPE)
+    client = gspread.authorize(creds)
+    spreadsheet = client.open(PROJECT_MARKET)
+
+    worksheet = spreadsheet.worksheet(sheet_name)
+
+    data = worksheet.get_all_values()
+
+    entry = []
+
+    for val in data[1:]:
+        if len(val) >= 7 and all(val[i].strip() for i in (0, 2, 3)):
+            try:
+                order_date = datetime.datetime.strptime(val[2].strip(), "%d.%m.%Y").date()
+                vendor_code = val[0].lower().strip()
+                quantities = int(re.sub(r'[^\d-]', '', val[3]))
+                accepted = int(re.sub(r'[^\d-]', '', val[6])) if val[6].strip() else None
+                discrepancy_justified = val[5].strip().upper() == 'TRUE'
+
+                entry.append({'order_date': order_date,
+                              'vendor_code': vendor_code,
+                              'quantities': quantities,
+                              'accepted': accepted,
+                              'discrepancy_justified': discrepancy_justified})
+            except Exception as e:
+                logger.error(f'Ошибка форматирования данных {val}: {str(e)}')
+
+    return entry
+
+
 def overseas_purchase():
     to_date = datetime.date.today() - datetime.timedelta(days=90)
 
@@ -240,9 +273,22 @@ def overseas_purchase():
             log_add_cost = EXCLUDED.log_add_cost
     """)
 
+    values_orders = get_values_orders()
+
     delete_market_sql = text("""
         DELETE FROM public.overseas_purchase_market
         WHERE accrual_date >= :to_date
+    """)
+
+    truncate_orders_sql = text("""
+        TRUNCATE TABLE public.market_purchases RESTART IDENTITY
+    """)
+
+    insert_orders_sql = text("""
+        INSERT INTO public.market_purchases
+            (order_date, vendor_code, quantities, accepted, discrepancy_justified)
+        VALUES
+            (:order_date, :vendor_code, :quantities, :accepted, :discrepancy_justified)
     """)
 
     insert_sql_market = text("""
@@ -266,6 +312,14 @@ def overseas_purchase():
             logger.info('Запись успешно завершена')
         else:
             logger.warning('Нет данных по рынку — пропускаю вставку в overseas_purchase_market')
+        if values_orders:
+            logger.info('Очищаю market_purchases и сбрасываю id')
+            conn.execute(truncate_orders_sql)
+            logger.info('Вставляю новые записи в market_purchases')
+            conn.execute(insert_orders_sql, values_orders)
+            logger.info('Запись успешно завершена')
+        else:
+            logger.warning('Нет данных по заказам рынка — пропускаю очистку и вставку в market_purchases')
 
 
 try:
