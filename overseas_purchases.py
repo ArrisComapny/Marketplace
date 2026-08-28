@@ -184,6 +184,8 @@ def get_values_market(to_date: datetime.date) -> list:
     entry = []
 
     for val in data:
+        if val and val[0].strip() == 'Дата приемки':  # шапка — пропускаем без ERROR
+            continue
         if len(val) >= 9 and all(val[i].strip() for i in (0, 1, 7, 8)):
             try:
                 date_obj = datetime.datetime.strptime(val[0].strip(), "%d.%m.%Y").date()
