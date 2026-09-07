@@ -560,7 +560,7 @@ async def main_oz_advert(retries: int = 6) -> None:
 
         # Не более 5 кабинетов параллельно (лимит Ozon Performance:
         # 5 одновременных выгрузок статистики на организацию).
-        semaphore = asyncio.Semaphore(5)
+        semaphore = asyncio.Semaphore(4)
 
         async def statistic_limited(client):
             async with semaphore:

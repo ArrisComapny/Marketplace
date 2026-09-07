@@ -29,7 +29,8 @@ class WBAsyncEngine:
                 try:
                     if params:
                         params = {k: v for k, v in params.items() if v is not None}
-                    async with session.get(url, json=json, params=params, ssl=False, timeout=180) as response:
+                    async with session.get(url, json=json, params=params, proxy=self.proxy_url, ssl=False,
+                                           timeout=180) as response:
                         if response.status == 404:
                             detail = await response.json()
                             raise ClientError(detail.get('detail', 'Отсутствует ответ'))
@@ -59,7 +60,8 @@ class WBAsyncEngine:
         async with await self._get_session(chat) as session:
             while retry != 0:
                 try:
-                    async with session.post(url, json=json, params=params, ssl=False, timeout=120) as response:
+                    async with session.post(url, json=json, params=params, proxy=self.proxy_url, ssl=False,
+                                            timeout=120) as response:
                         if response.status in [404, 403, 401]:
                             raise ClientError
                         if response.status == 204:

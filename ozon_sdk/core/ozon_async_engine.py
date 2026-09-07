@@ -40,7 +40,8 @@ class OzonAsyncEngine:
             while retry != 0:
                 try:
                     new_params = {k: v for k, v in params.items() if v is not None}
-                    async with session.get(url, params=new_params, ssl=False, timeout=120) as response:
+                    async with session.get(url, params=new_params, proxy=self.proxy_url, ssl=False,
+                                           timeout=120) as response:
                         if response.status in [404, 403]:
                             raise ClientError
                         if response.status != 200:
@@ -62,7 +63,8 @@ class OzonAsyncEngine:
         async with await self._get_session() as session:
             while retry != 0:
                 try:
-                    async with session.post(url, json=params, ssl=False, timeout=120) as response:
+                    async with session.post(url, json=params, proxy=self.proxy_url, ssl=False,
+                                            timeout=120) as response:
                         if response.status in [404, 403]:
                             raise ClientError
                         if response.status == 400:
