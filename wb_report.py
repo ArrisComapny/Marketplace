@@ -2,11 +2,12 @@ import asyncio
 import nest_asyncio
 import logging
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, date
 from sqlalchemy.exc import OperationalError
 
 from wb_sdk.errors import ClientError
 from wb_sdk.wb_api import WBApi
+from wb_sdk.entities import SalesReportDetailed
 from database import WBDbConnection
 from data_classes import DataWBReport
 
@@ -15,109 +16,155 @@ nest_asyncio.apply()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(message)s')
 logger = logging.getLogger(__name__)
 
+# Лимит finance-api: 1 запрос в минуту на аккаунт продавца
+THROTTLE_SECONDS = 61
+# Страница 100000 строк с урезанными полями ≈ 130 МБ, ~1.5 мин загрузки (таймаут POST в движке 240 с)
+LIMIT = 100000
+
+# Запрашиваем только поля, которые пишем в таблицу (+ rrdId для пагинации) —
+# без этого API отдаёт ~90 полей на строку и страница весит вдвое больше
+REPORT_FIELDS = [
+    'rrdId', 'reportId', 'giId', 'subjectName', 'nmId', 'brandName', 'vendorCode', 'techSize', 'sku',
+    'docTypeName', 'quantity', 'retailPrice', 'retailAmount', 'salePercent', 'commissionPercent',
+    'officeName', 'sellerOperName', 'orderDt', 'saleDt', 'rrDate', 'shkId', 'retailPriceWithDisc',
+    'deliveryAmount', 'returnAmount', 'deliveryService', 'giBoxTypeName', 'productDiscountForReport',
+    'sellerPromo', 'orderId', 'spp', 'kvwBase', 'kvw', 'supRatingUp', 'isKgvpV2', 'ppvzSalesCommission',
+    'forPay', 'ppvzReward', 'acquiringFee', 'acquiringBank', 'vw', 'vwNds', 'ppvzOfficeId', 'ppvzOfficeName',
+    'ppvzSupplierName', 'ppvzSupplierInn', 'declarationNumber', 'bonusTypeName', 'stickerId', 'country',
+    'penalty', 'additionalPayment', 'rebillLogisticCost', 'rebillLogisticOrg', 'kiz', 'paidStorage',
+    'deduction', 'paidAcceptance', 'srid',
+]
+
+MSK = timezone(timedelta(hours=3))
+
+
+def to_msk_date(value: datetime) -> date:
+    """API отдаёт время в UTC — переводим в московское, иначе даты
+    ночных заказов (00:00-03:00 МСК) уезжают на день назад."""
+    if value.tzinfo is not None:
+        value = value.astimezone(MSK)
+    return value.date()
+
+
+def _f(value) -> float:
+    return round(float(value or 0), 2)
+
+
+def entity_to_data(row: SalesReportDetailed) -> DataWBReport:
+    """Строка finance-api -> DataWBReport (имена полей как в statistics-api v5).
+
+    Неочевидные соответствия:
+      - sku в БД = nmId из API (артикул WB), а barcode в БД = sku из API (баркод)
+      - order_id в БД = orderId из API (поле rid в finance-api отсутствует)
+      - operation_date в БД = rrDate (в старом методе — rr_dt)
+      - posting_number в БД = srid из API
+      - ppvz_supplier_id: в finance-api отсутствует, пишем "0"
+    """
+    return DataWBReport(
+        realizationreport_id=str(row.reportId),
+        gi_id=str(row.giId or 0),
+        subject_name=row.subjectName or "",
+        sku=str(row.nmId or 0),
+        brand=row.brandName or "",
+        vendor_code=row.vendorCode or "",
+        size=row.techSize or "",
+        barcode=row.sku or "",
+        doc_type_name=row.docTypeName or "",
+        quantity=int(row.quantity or 0),
+        retail_price=_f(row.retailPrice),
+        retail_amount=_f(row.retailAmount),
+        sale_percent=int(row.salePercent or 0),
+        commission_percent=_f(row.commissionPercent),
+        office_name=row.officeName or "",
+        supplier_oper_name=row.sellerOperName or "",
+        order_date=to_msk_date(row.orderDt),
+        sale_date=to_msk_date(row.saleDt),
+        operation_date=row.rrDate,
+        shk_id=str(row.shkId or 0),
+        retail_price_withdisc_rub=_f(row.retailPriceWithDisc),
+        delivery_amount=int(row.deliveryAmount or 0),
+        return_amount=int(row.returnAmount or 0),
+        delivery_rub=_f(row.deliveryService),
+        gi_box_type_name=row.giBoxTypeName or "",
+        product_discount_for_report=_f(row.productDiscountForReport),
+        supplier_promo=_f(row.sellerPromo),
+        order_id=str(row.orderId or 0),
+        ppvz_spp_prc=_f(row.spp),
+        ppvz_kvw_prc_base=_f(row.kvwBase),
+        ppvz_kvw_prc=_f(row.kvw),
+        sup_rating_prc_up=_f(row.supRatingUp),
+        is_kgvp_v2=_f(row.isKgvpV2),
+        ppvz_sales_commission=_f(row.ppvzSalesCommission),
+        ppvz_for_pay=_f(row.forPay),
+        ppvz_reward=_f(row.ppvzReward),
+        acquiring_fee=_f(row.acquiringFee),
+        acquiring_bank=row.acquiringBank or "",
+        ppvz_vw=_f(row.vw),
+        ppvz_vw_nds=_f(row.vwNds),
+        ppvz_office_id=str(row.ppvzOfficeId or 0),
+        ppvz_office_name=row.ppvzOfficeName or "",
+        ppvz_supplier_id="0",
+        ppvz_supplier_name=row.ppvzSupplierName or "",
+        ppvz_inn=row.ppvzSupplierInn or "",
+        declaration_number=row.declarationNumber or "",
+        bonus_type_name=row.bonusTypeName or None,
+        sticker_id=str(row.stickerId or 0),
+        site_country=row.country or "",
+        penalty=_f(row.penalty),
+        additional_payment=_f(row.additionalPayment),
+        rebill_logistic_cost=_f(row.rebillLogisticCost),
+        rebill_logistic_org=row.rebillLogisticOrg or None,
+        kiz=row.kiz or None,
+        storage_fee=_f(row.paidStorage),
+        deduction=_f(row.deduction),
+        acceptance=_f(row.paidAcceptance),
+        posting_number=row.srid or "",
+    )
+
 
 async def get_report(db_conn: WBDbConnection, client_id: str, api_key: str, date_from: datetime,
                      date_to: datetime) -> None:
     """
-        Получает отчёта по WB для указанного клиента за определенный период времени.
+        Получает детализацию отчётов реализации по WB для указанного клиента за период
+        через finance-api (POST /api/finance/v1/sales-reports/detailed) —
+        замена отключаемого GET /api/v5/supplier/reportDetailByPeriod.
 
         Args:
             db_conn (WBDbConnection): Объект соединения с базой данных.
             client_id (str): ID кабинета.
             api_key (str): API KEY кабинета.
             date_from (datetime): Начальная дата периода.
-                Формат: YYYY-MM-DDTHH:mm:ss.sssZ.
-                Пример: 2019-11-25T10:43:06.51Z.
             date_to (datetime): Конечная дата периода.
-                Формат: YYYY-MM-DDTHH:mm:ss.sssZ.
-                Пример: 2019-11-25T10:43:06.51Z.
     """
 
     list_report = []
-    limit = 100000
-    rrdid = 0
+    rrd_id = 0
 
     # Инициализация API-клиента WB
     api_user = WBApi(api_key=api_key)
     while True:
-        for _ in range(3):
-            # Получение отчёта
-            answer = await api_user.get_supplier_report_detail_by_period(date_from=date_from.isoformat(),
-                                                                         date_to=date_to.isoformat(),
-                                                                         limit=limit,
-                                                                         rrdid=rrdid)
-            if answer.result:
-                break
+        answer = await api_user.get_sales_reports_detailed_by_period(
+            date_from=date_from.strftime('%Y-%m-%dT%H:%M:%S'),
+            date_to=date_to.strftime('%Y-%m-%dT%H:%M:%S'),
+            limit=LIMIT,
+            rrd_id=rrd_id,
+            fields=REPORT_FIELDS)
 
-            await asyncio.sleep(10)
-        else:
-            raise ClientError(f'Не удалось получить отчёт по {client_id}')
+        # Пустой ответ (204) — конец выгрузки, а не ошибка
+        if not answer.result:
+            break
 
-        # Обработка полученных результатов
-        for report in answer.result:
-            list_report.append(DataWBReport(realizationreport_id=str(report.realizationreport_id),
-                                            gi_id=str(report.gi_id),
-                                            subject_name=report.subject_name,
-                                            sku=str(report.nm_id),
-                                            brand=report.brand_name,
-                                            vendor_code=report.sa_name,
-                                            size=report.ts_name,
-                                            barcode=report.barcode,
-                                            doc_type_name=report.doc_type_name,
-                                            quantity=report.quantity,
-                                            retail_price=report.retail_price,
-                                            retail_amount=report.retail_amount,
-                                            sale_percent=report.sale_percent,
-                                            commission_percent=report.commission_percent,
-                                            office_name=report.office_name,
-                                            supplier_oper_name=report.supplier_oper_name,
-                                            order_date=report.order_dt,
-                                            sale_date=report.sale_dt,
-                                            operation_date=report.rr_dt,
-                                            shk_id=str(report.shk_id),
-                                            retail_price_withdisc_rub=round(report.retail_price_withdisc_rub, 2),
-                                            delivery_amount=report.delivery_amount,
-                                            return_amount=report.return_amount,
-                                            delivery_rub=round(report.delivery_rub, 2),
-                                            gi_box_type_name=report.gi_box_type_name,
-                                            product_discount_for_report=round(report.product_discount_for_report, 2),
-                                            supplier_promo=round(report.supplier_promo, 2),
-                                            order_id=str(report.rid),
-                                            ppvz_spp_prc=round(report.ppvz_spp_prc, 2),
-                                            ppvz_kvw_prc_base=round(report.ppvz_kvw_prc_base, 2),
-                                            ppvz_kvw_prc=round(report.ppvz_kvw_prc, 2),
-                                            sup_rating_prc_up=round(report.sup_rating_prc_up, 2),
-                                            is_kgvp_v2=round(report.is_kgvp_v2, 2),
-                                            ppvz_sales_commission=round(report.ppvz_sales_commission, 2),
-                                            ppvz_for_pay=round(report.ppvz_for_pay, 2),
-                                            ppvz_reward=round(report.ppvz_reward, 2),
-                                            acquiring_fee=round(report.acquiring_fee, 2),
-                                            acquiring_bank=report.acquiring_bank,
-                                            ppvz_vw=round(report.ppvz_vw, 2),
-                                            ppvz_vw_nds=round(report.ppvz_vw_nds, 2),
-                                            ppvz_office_id=str(report.ppvz_office_id),
-                                            ppvz_office_name=report.ppvz_office_name,
-                                            ppvz_supplier_id=str(report.ppvz_supplier_id),
-                                            ppvz_supplier_name=report.ppvz_supplier_name,
-                                            ppvz_inn=report.ppvz_inn,
-                                            declaration_number=report.declaration_number,
-                                            bonus_type_name=report.bonus_type_name,
-                                            sticker_id=report.sticker_id,
-                                            site_country=report.site_country,
-                                            penalty=round(report.penalty, 2),
-                                            additional_payment=round(report.additional_payment, 2),
-                                            rebill_logistic_cost=round(report.rebill_logistic_cost, 2),
-                                            rebill_logistic_org=report.rebill_logistic_org,
-                                            kiz=report.kiz,
-                                            storage_fee=round(report.storage_fee, 2),
-                                            deduction=round(report.deduction, 2),
-                                            acceptance=round(report.acceptance, 2),
-                                            posting_number=report.srid))
-            rrdid = report.rrd_id
-        if len(answer.result) == limit:
-            await asyncio.sleep(61)  # ← лимит WB: 1 запрос/мин; не нарываемся на 429
-            continue
-        break
+        list_report.extend(entity_to_data(row) for row in answer.result)
+        rrd_id = answer.result[-1].rrdId
+
+        if len(answer.result) < LIMIT:
+            break
+        await asyncio.sleep(THROTTLE_SECONDS)   # лимит WB: 1 запрос/мин
+
+    # Пустой отчёт — не затираем уже записанный период
+    if not list_report:
+        logger.warning(f"Пустой отчёт по {client_id} — запись пропущена")
+        return
 
     logger.info(f"Количество записей: {len(list_report)}")
     db_conn.add_wb_report_entry(client_id=client_id, start_date=date_from, list_report=list_report)

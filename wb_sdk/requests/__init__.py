@@ -31,3 +31,4 @@ from .supply_goods_request import *
 from .stocks_report_wb_warehouses_request import *
 from .sales_reports_list_request import *
 from .sales_reports_detailed_by_id_request import *
+from .sales_reports_detailed_request import *

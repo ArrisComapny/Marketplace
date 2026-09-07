@@ -61,7 +61,7 @@ class WBAsyncEngine:
             while retry != 0:
                 try:
                     async with session.post(url, json=json, params=params, proxy=self.proxy_url, ssl=False,
-                                            timeout=120) as response:
+                                            timeout=240) as response:
                         if response.status in [404, 403, 401]:
                             raise ClientError
                         if response.status == 204:

@@ -44,6 +44,7 @@ class WBApi:
         self._stocks_report_wb_warehouses_api = self._api_factory.get_api(StocksReportWbWarehousesResponse)
         self._sales_reports_list_api = self._api_factory.get_api(SalesReportsListResponse)
         self._sales_reports_detailed_api = self._api_factory.get_api(SalesReportsDetailedResponse)
+        self._sales_reports_detailed_by_period_api = self._api_factory.get_api(SalesReportsDetailedByPeriodResponse)
 
     async def get_stocks_report_wb_warehouses(self, limit: int = 1000, offset: int = 0) \
             -> StocksReportWbWarehousesResponse:
@@ -528,5 +529,37 @@ class WBApi:
         body = SalesReportsDetailedByIdRequest(limit=limit, rrdId=rrd_id)
         answer: SalesReportsDetailedResponse = await self._sales_reports_detailed_api.post(
             body=body, format_dict={'reportId': report_id})
+
+        return answer
+
+    async def get_sales_reports_detailed_by_period(self, date_from: str, date_to: str, limit: int = 100000,
+                                                   rrd_id: int = 0, period: str = 'weekly',
+                                                   fields: list[str] = None) \
+            -> SalesReportsDetailedByPeriodResponse:
+        """
+            Детализации к отчётам реализации за период (finance-api). \n
+            Замена устаревшего GET /api/v5/supplier/reportDetailByPeriod (statistics-api). \n
+            Данные доступны с 29 января 2024 года. \n
+            Лимит: 1 запрос в минуту на аккаунт продавца. \n
+            Пагинация: начинать с rrd_id=0, в следующих запросах передавать rrdId
+            из последней строки предыдущего ответа; конец выгрузки — ответ 204 (пустой result).
+
+            Args:
+                date_from (str): Начальная дата отчёта (RFC3339, время в МСК). Пример: "2025-06-20".
+                date_to (str): Конечная дата отчёта (RFC3339, время в МСК).
+                limit (int, optional): Количество строк в ответе, не более 100000.
+                rrd_id (int, optional): ID строки, с которой продолжить выгрузку.
+                period (str, optional): Периодичность отчётов: "weekly" (как в старом методе) или "daily".
+                fields (list[str], optional): Список полей ответа (camelCase, как в документации).
+                    Если не указан — возвращаются все поля.
+        """
+        body = SalesReportsDetailedRequest(dateFrom=date_from,
+                                           dateTo=date_to,
+                                           limit=limit,
+                                           rrdId=rrd_id,
+                                           period=period,
+                                           fields=fields)
+        answer: SalesReportsDetailedByPeriodResponse = await self._sales_reports_detailed_by_period_api.post(
+            body=body)
 
         return answer

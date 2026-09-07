@@ -42,6 +42,7 @@ class WBAPIFactory:
         StocksReportWbWarehousesResponse: 'https://seller-analytics-api.wildberries.ru/api/analytics/v1/stocks-report/wb-warehouses',
         SalesReportsListResponse: 'https://finance-api.wildberries.ru/api/finance/v1/sales-reports/list',
         SalesReportsDetailedResponse: 'https://finance-api.wildberries.ru/api/finance/v1/sales-reports/detailed/{reportId}',
+        SalesReportsDetailedByPeriodResponse: 'https://finance-api.wildberries.ru/api/finance/v1/sales-reports/detailed',
     }
 
     def __init__(self, engine: WBAsyncEngine):
