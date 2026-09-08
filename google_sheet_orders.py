@@ -29,6 +29,8 @@ PATH_JSON = os.path.join(PROJECT_ROOT, 'templates', 'service-account-432709-1178
 PROJECT = 'Ежедневные заказы'
 SAMPLE = 'Шаблон'
 WEEK = 'Неделька'
+TO_TODAY = 'ТО сегодня'
+TO_MINUS_7 = 'ТО -7'
 
 # Цветовые схемы
 COLOR_HEADER2 = {"red": 0.69, "green": 0.93, "blue": 0.93}
@@ -82,9 +84,9 @@ def get_column_cell_colors(spreadsheet_id: str, sheet_name: str, column_letter: 
 def keep_first_n_sheets(spreadsheet: gspread.Spreadsheet, n: int = 90):
     sheets = spreadsheet.worksheets()
 
-    keep = [SAMPLE, WEEK]
+    # Всегда сохраняем закреплённые листы: Шаблон, Неделька, ТО сегодня, ТО -7.
+    keep = [SAMPLE, WEEK, TO_TODAY, TO_MINUS_7]
 
-    # исключаем "Шаблон" из фильтрации, он всегда сохраняется
     filtered = [ws for ws in sheets if ws.title not in keep]
 
     # если больше n, удаляем лишние
@@ -94,21 +96,33 @@ def keep_first_n_sheets(spreadsheet: gspread.Spreadsheet, n: int = 90):
 
 
 def reorder_sheets(spreadsheet: gspread.Spreadsheet) -> None:
-    """Реорганизация листов с сохранением шаблона в начале."""
-    sheets = {sheet.title: sheet.id for sheet in spreadsheet.worksheets()}
-    desired_order = list(sheets.keys())
-    desired_order.remove(SAMPLE)
-    desired_order.remove(WEEK)
+    """Реорганизация листов: Шаблон, Неделька, ТО сегодня, ТО -7 — всегда первые
+    4 в этом порядке; ТО-листы держим скрытыми. Дальше — даты по убыванию, оригинал
+    перед своей копией."""
+    worksheets = spreadsheet.worksheets()
+    sheets = {ws.title: ws.id for ws in worksheets}
+
+    # Закреплённые листы всегда в начале в фиксированном порядке.
+    pinned = [SAMPLE, WEEK, TO_TODAY, TO_MINUS_7]
+
+    desired_order = [t for t in sheets if t not in pinned]
     desired_order.sort(reverse=True, key=lambda x: (x.split(" копия")[0], "копия" not in x))
-    desired_order = [SAMPLE, WEEK] + desired_order
+    desired_order = [t for t in pinned if t in sheets] + desired_order
 
     all_requests = []
     for index, sheet_name in enumerate(desired_order):
         sheet_id = sheets.get(sheet_name)
-        if sheet_id is not None:
-            all_requests.append({"updateSheetProperties": {"properties": {"sheetId": sheet_id, "index": index},
-                                                       "fields": "index"}})
-    if requests:
+        if sheet_id is None:
+            continue
+        props = {"sheetId": sheet_id, "index": index}
+        fields = "index"
+        # ТО-листы держим скрытыми — они служебные, данные оттуда тянутся формулами.
+        if sheet_name in (TO_TODAY, TO_MINUS_7):
+            props["hidden"] = True
+            fields = "index,hidden"
+        all_requests.append({"updateSheetProperties": {"properties": props, "fields": fields}})
+
+    if all_requests:
         spreadsheet.batch_update({"requests": all_requests})
 
 
@@ -719,16 +733,16 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
         "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
     }})
 
-    # Ширина колонок:
+    # Ширина колонок (33 столбца, Приёмка вставлена на позиции E):
     #   A=100 (Магазин), B=190 (Артикул),
-    #   C-I=60 (Стоки/Заказы/Оборачиваемость),
-    #   J-N=70 (Маржа + ROI + три GMROI),
-    #   O-Y=80 (9 компонентов + Сток на начало + Кол-во продаж),
-    #   Z-AB=70 (три ABC), AC=400 (Расшифровка), AD-AE=60 (Ближайшая поставка),
-    #   AF=120 (Комментарий).
-    column_widths = [(0, 1, 100), (1, 2, 190), (2, 9, 60),
-                     (9, 14, 70), (14, 25, 80), (25, 28, 70),
-                     (28, 29, 400), (29, 31, 60), (31, 32, 120)]
+    #   C-J=60 (Стоки: FBO, FBS, Приёмка, Итого / Заказы / Оборачиваемость),
+    #   K-O=70 (Маржа + ROI + три GMROI),
+    #   P-Z=80 (9 компонентов + Сток на начало + Кол-во продаж),
+    #   AA-AC=70 (три ABC), AD=400 (Расшифровка), AE-AF=60 (Ближайшая поставка),
+    #   AG=120 (Комментарий).
+    column_widths = [(0, 1, 100), (1, 2, 190), (2, 10, 60),
+                     (10, 15, 70), (15, 26, 80), (26, 29, 70),
+                     (29, 30, 400), (30, 32, 60), (32, 33, 120)]
     for start_col, end_col, width in column_widths:
         all_requests.append({"updateDimensionProperties": {"range": {"sheetId": sheet_id,
                                                                      "dimension": "COLUMNS",
@@ -737,20 +751,20 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                                                            "properties": {"pixelSize": width},
                                                            "fields": "pixelSize"}})
 
-    # Выравнивание по центру всех колонок кроме первых двух (C..AF, включая Расшифровку
+    # Выравнивание по центру всех колонок кроме первых двух (C..AG, включая Расшифровку
     # и Комментарий).
     all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
                                                   "startRowIndex": 2,
                                                   "startColumnIndex": 2,
-                                                  "endColumnIndex": 32},
+                                                  "endColumnIndex": 33},
                                         "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
                                         "fields": "userEnteredFormat.horizontalAlignment"}})
 
-    # Перенос текста для Расшифровки (AC=28) — там длинная подсказка по ABC.
+    # Перенос текста для Расшифровки (AD=29) — там длинная подсказка по ABC.
     all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
                                                   "startRowIndex": 2,
-                                                  "startColumnIndex": 28,
-                                                  "endColumnIndex": 29},
+                                                  "startColumnIndex": 29,
+                                                  "endColumnIndex": 30},
                                         "cell": {"userEnteredFormat": {"wrapStrategy": "WRAP"}},
                                         "fields": "userEnteredFormat.wrapStrategy"}})
 
@@ -759,14 +773,14 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                                         "cell": {"userEnteredFormat": {"verticalAlignment": "MIDDLE"}},
                                         "fields": "userEnteredFormat.verticalAlignment"}})
 
-    # Условное форматирование трёх колонок ABC (Z..AB, индексы 25..28):
+    # Условное форматирование трёх колонок ABC (AA..AC, индексы 26..29):
     # A=зелёный, B=жёлтый, C=красный
     for value, color in (('A', COLOR_ABC_A), ('B', COLOR_ABC_B), ('C', COLOR_ABC_C)):
         all_requests.append({"addConditionalFormatRule": {
             "rule": {"ranges": [{"sheetId": sheet_id,
                                  "startRowIndex": 2,
-                                 "startColumnIndex": 25,
-                                 "endColumnIndex": 28}],
+                                 "startColumnIndex": 26,
+                                 "endColumnIndex": 29}],
                      "booleanRule": {"condition": {"type": "TEXT_EQ",
                                                    "values": [{"userEnteredValue": value}]},
                                      "format": {"backgroundColor": color}}},
@@ -784,39 +798,39 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                                             "cell": {"userEnteredFormat": {"backgroundColor": COLOR_MAIN_ROW}},
                                             "fields": "userEnteredFormat.backgroundColor"}})
 
-    # Числовой формат #,##0 для C..I (Стоки/Заказы/Оборачиваемость)
+    # Числовой формат #,##0 для C..J (Стоки: FBO, FBS, Приёмка, Итого / Заказы / Оборач.)
     all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
                                                   "startRowIndex": 2,
                                                   "startColumnIndex": 2,
-                                                  "endColumnIndex": 9},
+                                                  "endColumnIndex": 10},
                                         "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER",
                                                                                         "pattern": "#,##0"}}},
                                         "fields": "userEnteredFormat.numberFormat"}})
 
-    # Процентный формат для Маржа + ROI + три GMROI (J..N)
+    # Процентный формат для Маржа + ROI + три GMROI (K..O) с разделителем тысяч
     all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
                                                   "startRowIndex": 2,
-                                                  "startColumnIndex": 9,
-                                                  "endColumnIndex": 14},
+                                                  "startColumnIndex": 10,
+                                                  "endColumnIndex": 15},
                                         "cell": {"userEnteredFormat": {"numberFormat": {"type": "PERCENT",
-                                                                                        "pattern": "0.00%"}}},
+                                                                                        "pattern": "#,##0.00%"}}},
                                         "fields": "userEnteredFormat.numberFormat"}})
 
-    # Числовой формат #,##0 для O..Y (9 компонентов + Сток на начало + Кол-во продаж)
+    # Числовой формат #,##0 для P..Z (9 компонентов + Сток на начало + Кол-во продаж)
     all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
                                                   "startRowIndex": 2,
-                                                  "startColumnIndex": 14,
-                                                  "endColumnIndex": 25},
+                                                  "startColumnIndex": 15,
+                                                  "endColumnIndex": 26},
                                         "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER",
                                                                                         "pattern": "#,##0"}}},
                                         "fields": "userEnteredFormat.numberFormat"}})
 
-    # Числовой формат #,##0 для AD..AE (Ближайшая поставка: Дней до / Кол-во).
-    # AC (28) — Расшифровка, текст, в этот диапазон не входит.
+    # Числовой формат #,##0 для AE..AF (Ближайшая поставка: Дней до / Кол-во).
+    # AD (29) — Расшифровка, текст, в этот диапазон не входит.
     all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
                                                   "startRowIndex": 2,
-                                                  "startColumnIndex": 29,
-                                                  "endColumnIndex": 31},
+                                                  "startColumnIndex": 30,
+                                                  "endColumnIndex": 32},
                                         "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER",
                                                                                         "pattern": "#,##0"}}},
                                         "fields": "userEnteredFormat.numberFormat"}})
@@ -841,32 +855,32 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
             "right": black_border,
         }})
 
-    # Группируем GMROI неделя + GMROI месяц (M..N, 12..14) и сворачиваем по умолчанию
+    # Группируем GMROI неделя + GMROI месяц (N..O, 13..15) и сворачиваем по умолчанию
     range_gmroi = {"sheetId": sheet_id,
                    "dimension": "COLUMNS",
-                   "startIndex": 12,
-                   "endIndex": 14}
+                   "startIndex": 13,
+                   "endIndex": 15}
     all_requests.append({"addDimensionGroup": {"range": range_gmroi}})
     all_requests.append({"updateDimensionProperties": {"range": range_gmroi,
                                                        "properties": {"hiddenByUser": True},
                                                        "fields": "hiddenByUser"}})
 
-    # Группируем компоненты + Сток на начало + Кол-во продаж (O..Y, 14..25) и сворачиваем
+    # Группируем компоненты + Сток на начало + Кол-во продаж (P..Z, 15..26) и сворачиваем
     range_cols = {"sheetId": sheet_id,
                   "dimension": "COLUMNS",
-                  "startIndex": 14,
-                  "endIndex": 25}
+                  "startIndex": 15,
+                  "endIndex": 26}
     all_requests.append({"addDimensionGroup": {"range": range_cols}})
     all_requests.append({"updateDimensionProperties": {"range": range_cols,
                                                        "properties": {"hiddenByUser": True},
                                                        "fields": "hiddenByUser"}})
 
-    # Группируем Расшифровку (AC, 28..29) и сворачиваем — широкая колонка с подсказкой,
+    # Группируем Расшифровку (AD, 29..30) и сворачиваем — широкая колонка с подсказкой,
     # удобно скрывать по умолчанию.
     range_desc = {"sheetId": sheet_id,
                   "dimension": "COLUMNS",
-                  "startIndex": 28,
-                  "endIndex": 29}
+                  "startIndex": 29,
+                  "endIndex": 30}
     all_requests.append({"addDimensionGroup": {"range": range_desc}})
     all_requests.append({"updateDimensionProperties": {"range": range_desc,
                                                        "properties": {"hiddenByUser": True},
@@ -899,15 +913,15 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
 
         # Тонкие вертикальные разделители 1px (строки 3..last_data_row) на границах
         # логических групп колонок:
-        #   right Артикул (B=1), right Итого стоков (E=4),
-        #   right Неделя заказов (G=6), right Неделя оборач. (I=8),
-        #   right GMROI год (L=11), right ABC оборач. (AB=27),
-        #   left Дней до (AD=29) — отделяет Ближайшую поставку.
+        #   right Артикул (B=1), right Итого стоков (F=5),
+        #   right Неделя заказов (H=7), right Неделя оборач. (J=9),
+        #   right GMROI год (M=12), right ABC оборач. (AC=28),
+        #   left Дней до (AE=30) — отделяет Ближайшую поставку.
         thin_black = {"style": "SOLID", "width": 1,
                       "color": {"red": 0, "green": 0, "blue": 0}}
-        vertical_lines = [(1, 'right'), (4, 'right'), (6, 'right'),
-                          (8, 'right'), (11, 'right'), (27, 'right'),
-                          (29, 'left')]
+        vertical_lines = [(1, 'right'), (5, 'right'), (7, 'right'),
+                          (9, 'right'), (12, 'right'), (28, 'right'),
+                          (30, 'left')]
         for col_idx, side in vertical_lines:
             group_requests.append({"updateBorders": {
                 "range": {"sheetId": sheet_id,
@@ -936,12 +950,14 @@ def update_week_sheet(db_conn: DbConnection):
     worksheet_week = spreadsheet.worksheet(WEEK)
     worksheet_sample = spreadsheet.worksheet(SAMPLE)
 
-    headers1 = ["", "", "Стоки", "", "", "Заказы", "", "Оборачиваемость", "",
+    # Стоки теперь на 4 подколонки (FBO, FBS, Приёмка, Итого) → 4 записи под "Стоки" в шапке1.
+    # Показатели остаются 20 подколонок. Итого 33 колонки (было 32).
+    headers1 = ["", "", "Стоки", "", "", "", "Заказы", "", "Оборачиваемость", "",
                 "Показатели", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
                 "Ближайшая поставка", "",
                 ""]
     headers2 = [
-        "Магазин", "Артикул", "FBO", "FBS", "Итого", "Вчера", "Неделя",
+        "Магазин", "Артикул", "FBO", "FBS", "Приёмка", "Итого", "Вчера", "Неделя",
         "Вчера", "Неделя",
         "Маржа", "ROI",
         "GMROI год", "GMROI неделя", "GMROI месяц",
@@ -1218,42 +1234,59 @@ def update_week_sheet(db_conn: DbConnection):
             return 0
         return stock_start_map.get((client_id, vendor), 0)
 
-    def stock_start_for_main(related_vendors, main_vendor) -> int:
-        """Сток на начало для главного: FBO по магазинам (related) + FBS-пул по группе."""
-        total = 0
-        # FBS-пул на начало — по всей группе (мейн может отсутствовать в шаблоне).
-        for v in fbs_members(main_vendor, related_vendors):
-            total += stock_start_map.get(('FBS', v), 0)
-        for v in related_vendors:
-            for cid in vendor_clients.get(v, ()):
-                total += stock_start_map.get((cid, v), 0)
-        return total
-
     # Диапазон для SUMPRODUCT в ABC-формулах: рассчитаем как 2 шапки + достаточный запас.
     # Точный нижний индекс мы узнаем только после сборки data, поэтому фиксируем верхнюю
     # границу в 10000 — это безопасно для типичных объёмов и допустимо в Sheets.
     ABC_RANGE_END = 10000
 
-    def margin_formula(row_idx: int) -> str:
-        """Маржа в колонке J = profit / Выручка. Компоненты O..W, Выручка в O."""
+    def priyomka_formula(row_idx: int) -> str:
+        """Приёмка мейн-артикула — суммируем 5 колонок 'ТО сегодня' (D+G+J+M+P) по вендору из B."""
         r = row_idx
-        profit = f'(O{r}-P{r}-Q{r}-R{r}-S{r}-T{r}-U{r}-V{r}-W{r})'
-        return f'=ЕСЛИОШИБКА({profit}/O{r};"")'
+        parts = [f"СУММЕСЛИ('ТО сегодня'!A:A;B{r};'ТО сегодня'!{col}:{col})"
+                 for col in ('D', 'G', 'J', 'M', 'P')]
+        return '=' + '+'.join(parts)
+
+    def fbo_formula(row_idx: int) -> str:
+        """FBO мейн-артикула — суммируем 4 колонки 'ТО сегодня' (C+F+I+L) по вендору из B."""
+        r = row_idx
+        parts = [f"СУММЕСЛИ('ТО сегодня'!A:A;B{r};'ТО сегодня'!{col}:{col})"
+                 for col in ('C', 'F', 'I', 'L')]
+        return '=' + '+'.join(parts)
+
+    def fbs_formula(row_idx: int) -> str:
+        """FBS мейн-артикула — суммируем 2 колонки 'ТО сегодня' (O+Q) по вендору из B."""
+        r = row_idx
+        parts = [f"СУММЕСЛИ('ТО сегодня'!A:A;B{r};'ТО сегодня'!{col}:{col})"
+                 for col in ('O', 'Q')]
+        return '=' + '+'.join(parts)
+
+    def stock_start_main_formula(row_idx: int) -> str:
+        """Сток на начало для мейн-артикула — берём столбец R из листа 'ТО -7'
+        (снимок остатков неделю назад) по вендору из B. Отрицательные суммы
+        (например, техническая коррекция) обрезаем до 0."""
+        r = row_idx
+        return f"=МАКС(0;СУММЕСЛИ('ТО -7'!A:A;B{r};'ТО -7'!R:R))"
+
+    def margin_formula(row_idx: int) -> str:
+        """Маржа в колонке K = profit / Выручка. Компоненты P..X, Выручка в P."""
+        r = row_idx
+        profit = f'(P{r}-Q{r}-R{r}-S{r}-T{r}-U{r}-V{r}-W{r}-X{r})'
+        return f'=ЕСЛИОШИБКА({profit}/P{r};"")'
 
     def roi_formula(row_idx: int) -> str:
-        """ROI в колонке K = profit / Себес. Компоненты O..W, Себес в P."""
+        """ROI в колонке L = profit / Себес. Компоненты P..X, Себес в Q."""
         r = row_idx
-        profit = f'(O{r}-P{r}-Q{r}-R{r}-S{r}-T{r}-U{r}-V{r}-W{r})'
-        return f'=ЕСЛИОШИБКА({profit}/P{r};"")'
+        profit = f'(P{r}-Q{r}-R{r}-S{r}-T{r}-U{r}-V{r}-W{r}-X{r})'
+        return f'=ЕСЛИОШИБКА({profit}/Q{r};"")'
 
     def abc_revenue_formula(row_idx: int) -> str:
         """ABC по выручке (Парето 80/15/5). Главные и дубли — отдельно (A пуст у главных,
-        там нет Магазина; у дублей в A стоит "WB Voyor" и т.п.). Выручка в колонке O."""
+        там нет Магазина; у дублей в A стоит "WB Voyor" и т.п.). Выручка в колонке P."""
         r = row_idx
         e = ABC_RANGE_END
         kind = f'(($A$3:$A${e}="")=(A{r}=""))'
-        cum = f'СУММПРОИЗВ({kind}*($O$3:$O${e}>=O{r})*$O$3:$O${e})'
-        total = f'СУММПРОИЗВ({kind}*$O$3:$O${e})'
+        cum = f'СУММПРОИЗВ({kind}*($P$3:$P${e}>=P{r})*$P$3:$P${e})'
+        total = f'СУММПРОИЗВ({kind}*$P$3:$P${e})'
         return (f'=ЕСЛИОШИБКА('
                 f'ЕСЛИ({cum}/{total}<=0,8;"A";'
                 f'ЕСЛИ({cum}/{total}<=0,95;"B";"C"))'
@@ -1261,43 +1294,43 @@ def update_week_sheet(db_conn: DbConnection):
 
     def abc_roi_formula(row_idx: int) -> str:
         """ABC по ROI (Парето 80/15/5). Главные и дубли — отдельно (A пуст у главных).
-        ROI в колонке K. Если K пустой/не число — C."""
+        ROI в колонке L. Если L пустой/не число — C."""
         r = row_idx
         e = ABC_RANGE_END
         kind = f'(($A$3:$A${e}="")=(A{r}=""))'
-        cum = f'СУММПРОИЗВ({kind}*($K$3:$K${e}>=K{r})*$K$3:$K${e})'
-        total = f'СУММПРОИЗВ({kind}*$K$3:$K${e})'
-        return (f'=ЕСЛИ(НЕ(ЕЧИСЛО(K{r}));"C";'
+        cum = f'СУММПРОИЗВ({kind}*($L$3:$L${e}>=L{r})*$L$3:$L${e})'
+        total = f'СУММПРОИЗВ({kind}*$L$3:$L${e})'
+        return (f'=ЕСЛИ(НЕ(ЕЧИСЛО(L{r}));"C";'
                 f'ЕСЛИОШИБКА('
                 f'ЕСЛИ({cum}/{total}<=0,8;"A";'
                 f'ЕСЛИ({cum}/{total}<=0,95;"B";"C"))'
                 f';"C"))')
 
     def abc_turnover_formula(row_idx: int) -> str:
-        """ABC по оборачиваемости: >45 C, >30 B, иначе A. Колонка I (Оборач. Неделя).
-        Если в I нет числа (нет заказов → ""), класс = C."""
+        """ABC по оборачиваемости: >45 C, >30 B, иначе A. Колонка J (Оборач. Неделя).
+        Если в J нет числа (нет заказов → ""), класс = C."""
         r = row_idx
-        return (f'=ЕСЛИ(НЕ(ЕЧИСЛО(I{r}));"C";'
-                f'ЕСЛИ(I{r}>45;"C";ЕСЛИ(I{r}>30;"B";"A")))')
+        return (f'=ЕСЛИ(НЕ(ЕЧИСЛО(J{r}));"C";'
+                f'ЕСЛИ(J{r}>45;"C";ЕСЛИ(J{r}>30;"B";"A")))')
 
     def gmroi_week_formula(row_idx: int) -> str:
-        """Недельный GMROI (база) — теперь в колонке M.
+        """Недельный GMROI (база) — теперь в колонке N.
 
-        profit            = O - P - Q - R - S - T - U - V - W (Выручка − все расходы)
-        средний_сток      = (E + X) / 2 — среднее между текущим (E=Итого) и началом (X)
-        себес_за_единицу  = P / Y (Себес / Кол-во продаж)
+        profit            = P - Q - R - S - T - U - V - W - X (Выручка − все расходы)
+        средний_сток      = (F + Y) / 2 — среднее между текущим (F=Итого) и началом (Y)
+        себес_за_единицу  = Q / Z (Себес / Кол-во продаж)
         """
         r = row_idx
         return (f'=ЕСЛИОШИБКА('
-                f'(O{r}-P{r}-Q{r}-R{r}-S{r}-T{r}-U{r}-V{r}-W{r})'
-                f'/((E{r}+X{r})/2*(P{r}/Y{r}))'
+                f'(P{r}-Q{r}-R{r}-S{r}-T{r}-U{r}-V{r}-W{r}-X{r})'
+                f'/((F{r}+Y{r})/2*(Q{r}/Z{r}))'
                 f';"")')
 
     def gmroi_month_formula(row_idx: int) -> str:
-        return f'=ЕСЛИ(M{row_idx}="";"";M{row_idx}*52/12)'
+        return f'=ЕСЛИ(N{row_idx}="";"";N{row_idx}*52/12)'
 
     def gmroi_year_formula(row_idx: int) -> str:
-        return f'=ЕСЛИ(M{row_idx}="";"";M{row_idx}*52)'
+        return f'=ЕСЛИ(N{row_idx}="";"";N{row_idx}*52)'
 
     # Собираем строки таблицы
     data: list[list] = [headers1, headers2]
@@ -1354,41 +1387,41 @@ def update_week_sheet(db_conn: DbConnection):
         def col_sum(letter):
             return "=СУММ(" + ";".join(f"{letter}{r}" for r in range(first_dub, last_dub + 1)) + ")"
 
-        # FBS главного — по всей группе артикула (мейн может отсутствовать в шаблоне).
-        fbs_total = sum(stock_map.get(('FBS', v), 0) for v in fbs_members(main_vendor, related))
+        # FBS главного берётся формулой из листа 'ТО сегодня' (O+Q) — см. fbs_formula.
         comment_main, qty_main, days_main = supply_for(main_vendor)
 
-        # Компоненты прибыли O..W — суммой по дублям; X (Сток на начало) — Python value
-        # (FBS-пул не выражается через сумму ячеек дублей); Y (Кол-во продаж) — суммой.
-        component_sums = [col_sum(letter) for letter in "OPQRSTUVW"]
-        main_x_start = stock_start_for_main(related, main_vendor)
-        qty_sales_sum = col_sum("Y")
+        # Компоненты прибыли P..X — суммой по дублям; Y (Сток на начало) для мейна
+        # берётся формулой из листа 'ТО -7' (см. stock_start_main_formula);
+        # Z (Кол-во продаж) — суммой по дублям.
+        component_sums = [col_sum(letter) for letter in "PQRSTUVWX"]
+        qty_sales_sum = col_sum("Z")
 
         data.append([
             '', main_vendor,
-            col_sum("C"),
-            fbs_total,
-            f"=СУММ(C{agg_row};D{agg_row})",
-            col_sum("F"),
-            col_sum("G"),
-            f'=ЕСЛИ(F{agg_row}=0;"";ОКРУГЛ(E{agg_row}/F{agg_row};0))',
-            f'=ЕСЛИ(G{agg_row}=0;"";ОКРУГЛ(E{agg_row}*7/G{agg_row};0))',
-            margin_formula(agg_row),
-            roi_formula(agg_row),
-            gmroi_year_formula(agg_row),
-            gmroi_week_formula(agg_row),
-            gmroi_month_formula(agg_row),
-            *component_sums,
-            main_x_start,
-            qty_sales_sum,
-            abc_revenue_formula(agg_row),
-            abc_roi_formula(agg_row),
-            abc_turnover_formula(agg_row),
+            fbo_formula(agg_row),                      # C = FBO (формула из 'ТО сегодня' C+F+I+L)
+            fbs_formula(agg_row),                      # D = FBS (формула из 'ТО сегодня' O+Q)
+            priyomka_formula(agg_row),                 # E = Приёмка (только у мейна)
+            f"=СУММ(C{agg_row};D{agg_row};E{agg_row})",  # F = Итого (FBO+FBS+Приёмка)
+            col_sum("G"),                              # G = Вчера заказы
+            col_sum("H"),                              # H = Неделя заказы
+            f'=ЕСЛИ(G{agg_row}=0;"";ОКРУГЛ(F{agg_row}/G{agg_row};0))',   # I = Оборач. Вчера
+            f'=ЕСЛИ(H{agg_row}=0;"";ОКРУГЛ(F{agg_row}*7/H{agg_row};0))', # J = Оборач. Неделя
+            margin_formula(agg_row),                   # K = Маржа
+            roi_formula(agg_row),                      # L = ROI
+            gmroi_year_formula(agg_row),               # M = GMROI год
+            gmroi_week_formula(agg_row),               # N = GMROI неделя
+            gmroi_month_formula(agg_row),              # O = GMROI месяц
+            *component_sums,                           # P..X = 9 компонентов
+            stock_start_main_formula(agg_row),         # Y = Сток на начало (из 'ТО -7' R)
+            qty_sales_sum,                             # Z = Кол-во продаж
+            abc_revenue_formula(agg_row),              # AA = ABC выручка
+            abc_roi_formula(agg_row),                  # AB = ABC ROI
+            abc_turnover_formula(agg_row),             # AC = ABC оборач.
             abc_description(block_rev_classes.get(main_vendor, ''),
                             block_roi_classes.get(main_vendor, ''),
-                            _block_turnover_class(main_vendor)),
-            days_main, qty_main,
-            comment_main,
+                            _block_turnover_class(main_vendor)),  # AD = Расшифровка
+            days_main, qty_main,                       # AE, AF = Ближайшая поставка
+            comment_main,                              # AG = Комментарий
         ])
 
         for d in dub_rows_data:
@@ -1396,12 +1429,13 @@ def update_week_sheet(db_conn: DbConnection):
             shop_combined = f"{d['mp']} {d['shop']}".strip() if d['mp'] or d['shop'] else ''
             data.append([
                 shop_combined, d['vendor'],
-                d['fbo_qty'], '',
-                f"=C{row_idx}",
-                d['yest_qty'],
-                d['week_qty'],
-                f'=ЕСЛИ(F{row_idx}=0;"";ОКРУГЛ(E{row_idx}/F{row_idx};0))',
-                f'=ЕСЛИ(G{row_idx}=0;"";ОКРУГЛ(E{row_idx}*7/G{row_idx};0))',
+                d['fbo_qty'], '',                          # C=FBO, D=FBS (пусто у дубля)
+                '',                                        # E = Приёмка — только у мейна
+                f"=C{row_idx}",                            # F = Итого (только FBO у дубля)
+                d['yest_qty'],                             # G = Вчера
+                d['week_qty'],                             # H = Неделя
+                f'=ЕСЛИ(G{row_idx}=0;"";ОКРУГЛ(F{row_idx}/G{row_idx};0))',
+                f'=ЕСЛИ(H{row_idx}=0;"";ОКРУГЛ(F{row_idx}*7/H{row_idx};0))',
                 margin_formula(row_idx),
                 roi_formula(row_idx),
                 gmroi_year_formula(row_idx),
