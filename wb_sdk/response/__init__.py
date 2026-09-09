@@ -4,7 +4,6 @@ from .promotion_adverts_response import *
 from .fullstats_response import *
 from .nm_report_detail_response import *
 from .list_goods_filter_response import *
-from .supplier_report_detail_by_period_response import *
 from .paid_storage_response import *
 from .paid_storage_status_response import *
 from .paid_storage_download_response import *

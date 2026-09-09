@@ -9,7 +9,6 @@ class OzonAPIFactory:
     """Фабрика для endpoint'ов апи. Получение инстанса апи для каждого типа возвращаемого значения."""
 
     api_list: dict[Type[BaseResponse], str] = {
-        FinanceTransactionListResponse: '/v3/finance/transaction/list',
         PostingFBSGetResponse: '/v3/posting/fbs/get',
         PostingFBOGetResponse: '/v2/posting/fbo/get',
         ProductListResponse: '/v3/product/list',
@@ -21,7 +20,10 @@ class OzonAPIFactory:
         ProductInfoDiscountedResponse: '/v1/product/info/discounted',
         ProductRelatedSkuGetResponse: '/v1/product/related-sku/get',
         ProductInfoStocksResponse: '/v4/product/info/stocks',
-        FinanceRealizationResponse: '/v2/finance/realization'
+        FinanceRealizationResponse: '/v2/finance/realization',
+        FinanceAccrualByDayResponse: '/v1/finance/accrual/by-day',
+        FinanceAccrualTypesResponse: '/v1/finance/accrual/types',
+        FinanceAccrualPostingsResponse: '/v1/finance/accrual/postings',
     }
 
     def __init__(self, engine: OzonAsyncEngine):

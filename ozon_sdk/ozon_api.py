@@ -15,7 +15,6 @@ class OzonApi:
         self._engine = OzonAsyncEngine(client_id=client_id, api_key=api_key)
         self._api_factory = OzonAPIFactory(self._engine)
 
-        self._finance_transaction_list_api = self._api_factory.get_api(FinanceTransactionListResponse)
         self._posting_fbs_get_api = self._api_factory.get_api(PostingFBSGetResponse)
         self._posting_fbo_get_api = self._api_factory.get_api(PostingFBOGetResponse)
         self._product_list_api = self._api_factory.get_api(ProductListResponse)
@@ -28,43 +27,43 @@ class OzonApi:
         self._product_related_sku_get_api = self._api_factory.get_api(ProductRelatedSkuGetResponse)
         self._product_info_stocks_api = self._api_factory.get_api(ProductInfoStocksResponse)
         self._finance_realization_api = self._api_factory.get_api(FinanceRealizationResponse)
+        self._finance_accrual_by_day_api = self._api_factory.get_api(FinanceAccrualByDayResponse)
+        self._finance_accrual_types_api = self._api_factory.get_api(FinanceAccrualTypesResponse)
+        self._finance_accrual_postings_api = self._api_factory.get_api(FinanceAccrualPostingsResponse)
 
-    async def get_finance_transaction_list(self, from_field: str, to: str, posting_number: str = "",
-                                           operation_type: list[str] = None, transaction_type: str = 'all',
-                                           page: int = 1, page_size: int = 1000) -> FinanceTransactionListResponse:
+    async def get_finance_accrual_by_day(self, date: str, last_id: str = '') -> FinanceAccrualByDayResponse:
         """
-            Список транзакций.
-
-            Тип начисления(некоторые операции могут быть разделены во времени):
-                all — все, \n
-                orders — заказы, \n
-                returns — возвраты и отмены, \n
-                services — сервисные сборы, \n
-                compensation — компенсация, \n
-                transferDelivery — стоимость доставки, \n
-                other — прочее.
+            Начисления за день (замена отключённого /v3/finance/transaction/list). \n
+            Пагинация: первый запрос с пустым last_id, далее передавать last_id из ответа
+            (живёт 15 минут) с той же датой; конец — пустой last_id / пустой список.
 
             Args:
-                from_field (str): Начало периода в формате YYYY-MM-DD.
-                to (str): Конец периода в формате YYYY-MM-DD.
-                posting_number (str, optional): Номер отправления.
-                operation_type (bool, optional): Тип Операции.
-                transaction_type (str, optional): Тип начисления.
-                page (int, optional): Номер страницы, возвращаемой в запросе.
-                page_size (int, optional): Количество элементов на странице.
+                date (str): Дата начислений YYYY-MM-DD (самая ранняя — 2022-01-01).
+                last_id (str, optional): Идентификатор последнего значения предыдущей страницы.
         """
-        if operation_type is None:
-            operation_type = []
-        request = FinanceTransactionListRequest(
-            filter=FinanceTransactionListFilter(date=FinanceTransactionListDate(from_field=from_field,
-                                                                                to=to),
-                                                operation_type=operation_type,
-                                                posting_number=posting_number,
-                                                transaction_type=transaction_type),
-            page=page,
-            page_size=page_size
-        )
-        answer: FinanceTransactionListResponse = await self._finance_transaction_list_api.post(request)
+        request = FinanceAccrualByDayRequest(date=date, last_id=last_id)
+        answer: FinanceAccrualByDayResponse = await self._finance_accrual_by_day_api.post(request)
+
+        return answer
+
+    async def get_finance_accrual_types(self) -> FinanceAccrualTypesResponse:
+        """
+            Справочник начислений: type_id -> name / description. \n
+            У метода жёсткий лимит запросов — запрашивать один раз за прогон, а не по кабинетам.
+        """
+        answer: FinanceAccrualTypesResponse = await self._finance_accrual_types_api.post(FinanceAccrualTypesRequest())
+
+        return answer
+
+    async def get_finance_accrual_postings(self, posting_numbers: list[str]) -> FinanceAccrualPostingsResponse:
+        """
+            Начисления по отправлениям (количество, цена продавца, тип начисления по каждой строке).
+
+            Args:
+                posting_numbers (list[str]): Номера отправлений, от 1 до 200.
+        """
+        request = FinanceAccrualPostingsRequest(posting_numbers=posting_numbers)
+        answer: FinanceAccrualPostingsResponse = await self._finance_accrual_postings_api.post(request)
 
         return answer
 

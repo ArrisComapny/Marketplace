@@ -19,6 +19,9 @@ nest_asyncio.apply()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(message)s')
 logger = logging.getLogger(__name__)
 
+# Один запрос analytics/data в полёте на весь скрипт (кабинеты идут параллельно)
+analytics_lock = asyncio.Lock()
+
 
 async def add_adverts(db_conn: OzDbConnection, client_id: str, performance_id: str, client_secret: str,
                       from_date: date, name: str = '') -> None:
@@ -209,13 +212,16 @@ async def add_statistics_card_products(db_conn: OzDbConnection, client_id: str, 
     api_user = OzonApi(client_id=client_id, api_key=api_key)
 
     while True:
-        # Получение списка статистик по КТ
-        answer = await api_user.get_analytics_data(date_from=(date_yesterday - timedelta(days=30)).isoformat(),
-                                                   date_to=date_yesterday.isoformat(),
-                                                   dimension=['sku', 'day'],
-                                                   limit=limit,
-                                                   metrics=metrics,
-                                                   offset=offset)
+        # Получение списка статистик по КТ — по одному запросу на весь скрипт:
+        # analytics/data троттлится на стороне Ozon, параллельные кабинеты выбивают друг друга
+        async with analytics_lock:
+            answer = await api_user.get_analytics_data(date_from=(date_yesterday - timedelta(days=30)).isoformat(),
+                                                       date_to=date_yesterday.isoformat(),
+                                                       dimension=['sku', 'day'],
+                                                       limit=limit,
+                                                       metrics=metrics,
+                                                       offset=offset)
+            await asyncio.sleep(3)
 
         # Получение sku товаров по ID кабинета продавца
         list_sku = db_conn.get_oz_sku_vendor_code(client_id=client_id)
@@ -560,7 +566,7 @@ async def main_oz_advert(retries: int = 6) -> None:
 
         # Не более 5 кабинетов параллельно (лимит Ozon Performance:
         # 5 одновременных выгрузок статистики на организацию).
-        semaphore = asyncio.Semaphore(4)
+        semaphore = asyncio.Semaphore(15)
 
         async def statistic_limited(client):
             async with semaphore:

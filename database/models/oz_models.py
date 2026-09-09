@@ -177,6 +177,17 @@ class OzServices(Base):
                                        name='oz_services_unique'),)
 
 
+class OzAccrualTypes(Base):
+    """Модель таблицы oz_accrual_types — кэш справочника начислений Ozon (/v1/finance/accrual/types).
+    У метода жёсткий лимит запросов, поэтому справочник хранится в базе и обновляется только
+    при появлении неизвестного type_id."""
+    __tablename__ = 'oz_accrual_types'
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(length=255), nullable=False)
+    description = Column(String(length=1000), default='', nullable=False)
+
+
 class OzTypeServices(Base):
     """Модель таблицы oz_type_services."""
     __tablename__ = 'oz_type_services'

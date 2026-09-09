@@ -9,6 +9,7 @@ from sqlalchemy.exc import OperationalError
 
 from database import OzDbConnection
 from ozon_sdk.ozon_api import OzonApi
+from ozon_sdk.entities import FinanceAccrual, FinanceAccrualMoney
 from data_classes import DataOperation
 from ozon_sdk.errors import ClientError
 
@@ -17,146 +18,135 @@ nest_asyncio.apply()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(message)s')
 logger = logging.getLogger(__name__)
 
+# Лимит accrual/postings — до 200 отправлений за запрос
+POSTINGS_CHUNK = 200
+# Тип начисления «Вознаграждение за продажу» в справочнике /v1/finance/accrual/types
+SALE_COMMISSION_TYPE_ID = 69
+
+
+def _f(money: FinanceAccrualMoney | None) -> float:
+    return round(float(money.amount), 2) if money and money.amount is not None else 0.0
+
+
+async def get_accruals(api_user: OzonApi, date: str) -> list[FinanceAccrual]:
+    """Все начисления кабинета за день (пагинация по last_id)."""
+    accruals, last_id = [], ''
+    while True:
+        answer = await api_user.get_finance_accrual_by_day(date=date, last_id=last_id)
+        accruals.extend(answer.accruals)
+        if not answer.accruals or not answer.last_id:
+            break
+        last_id = answer.last_id
+    return accruals
+
+
+async def get_quantities(api_user: OzonApi, posting_numbers: list[str]) -> dict:
+    """{(posting_number, sku): quantity} из accrual/postings (в by-day количества нет)."""
+    quantities = {}
+    posting_numbers = sorted(set(posting_numbers))
+    for start in range(0, len(posting_numbers), POSTINGS_CHUNK):
+        answer = await api_user.get_finance_accrual_postings(posting_numbers=posting_numbers[start:start + POSTINGS_CHUNK])
+        for posting in answer.posting_accruals:
+            for line in posting.accruals:
+                key = (posting.posting_number, str(line.sku))
+                # приоритет строке «Вознаграждение за продажу», иначе любая строка с количеством
+                if line.type_id == SALE_COMMISSION_TYPE_ID or key not in quantities:
+                    if line.quantity:
+                        quantities[key] = line.quantity
+    return quantities
+
 
 async def add_oz_main_entry(db_conn: OzDbConnection, client_id: str, api_key: str, date_now: datetime) -> None:
     """
         Добавление записей в таблицу `oz_main_table` за указанную дату.
+        Источник — начисления finance/accrual/by-day (замена отключённого finance/transaction/list):
+        строка создаётся по каждому начислению продажи/возврата товара, суммы берутся из него же.
 
         Args:
             db_conn (OzDbConnection): Объект соединения с базой данных.
             client_id (str): ID кабинета.
             api_key (str): API KEY кабинета.
-            date_now (datetime): Начальная дата периода.
+            date_now (datetime): Дата начислений.
     """
 
-    from_date = date_now - timedelta(days=1)
-    to_date = date_now - timedelta(microseconds=1)
-    logger.info(f"За период с <{from_date}> до <{to_date}>")
+    accrual_date = date_now.date()
+    logger.info(f"За дату <{accrual_date}>")
 
-    page = 1
     list_operation = []
-    list_sku = list(db_conn.get_oz_sku_vendor_code(client_id=client_id).keys())
-    operation_type = {"OperationAgentDeliveredToCustomer": "delivered",
-                      "ClientReturnAgentOperation": "cancelled"}
+    dict_sku = db_conn.get_oz_sku_vendor_code(client_id=client_id)
 
     # Инициализация API-клиента Ozon
     api_user = OzonApi(client_id=client_id, api_key=api_key)
 
-    while True:
-        # Получение списка финансовых транзакций
-        answer = await api_user.get_finance_transaction_list(from_field=from_date.isoformat(),
-                                                             to=to_date.isoformat(),
-                                                             operation_type=[*operation_type.keys()],
-                                                             page=page)
+    accruals = await get_accruals(api_user, date=accrual_date.isoformat())
 
-        # Обработка полученных результатов
-        for operation in answer.result.operations:
+    # Продажи и возвраты — начисления категории POSTING с блоком commission у товара
+    sales = []
+    for accrual in accruals:
+        if accrual.accrued_category != 'POSTING' or not accrual.posting:
+            continue
+        for product in accrual.posting.products:
+            if product.commission:
+                sales.append((accrual, product))
 
-            # Извлечение информации о доставке и отправлении
-            type_of_transaction = operation_type.get(operation.operation_type)  # Тип операции
-            if not type_of_transaction:
-                continue
+    quantities = await get_quantities(api_user, [accrual.unit_number for accrual, _ in sales])
 
-            delivery_schema = operation.posting.delivery_schema  # Склад
-            posting_number = operation.posting.posting_number  # Номер отправления
-            accrual_date = operation.operation_date.date()  # Дата принятия учёта
-            sku_transaction = [str(item.sku) for item in operation.items]
+    for accrual, product in sales:
+        posting_number = accrual.unit_number
+        delivery_schema = (accrual.posting.delivery_schema or '').upper()   # Fbo -> FBO
+        sku = str(product.sku)
 
-            # Получение дополнительной информации о товаре в зависимости от схемы доставки
+        sale = _f(product.commission.sale_amount)
+        commission = _f(product.commission.commission)
+        bonus = round(_f(product.commission.bonus) + _f(product.commission.coinvestment), 2)
+
+        # Отмена/возврат приходит отдельным начислением с отрицательной суммой продажи
+        type_of_transaction = 'delivered' if sale >= 0 else 'cancelled'
+        quantity = quantities.get((posting_number, sku), 1)
+
+        # sale и bonus — за единицу товара, commission — общая (так исторически заполнена таблица)
+        if quantity > 1:
+            sale = round(sale / quantity, 2)
+            bonus = round(bonus / quantity, 2)
+        if type_of_transaction == 'cancelled':
+            quantity = -quantity
+
+        # Артикул продавца: справочник карточек; для уценённых SKU — основной SKU
+        if sku not in dict_sku:
+            answer_info = await api_user.get_product_info_discounted(discounted_skus=[sku])
+            for info in answer_info.items:
+                if sku == str(info.discounted_sku):
+                    sku = str(info.sku)
+        vendor_code = dict_sku.get(sku)
+        if not vendor_code:
             if delivery_schema == 'FBO':
-                answer_fb = await api_user.get_posting_fbo(posting_number=posting_number,
-                                                           analytics_data=True,
-                                                           financial_data=True,
-                                                           translit=True)
+                answer_fb = await api_user.get_posting_fbo(posting_number=posting_number, analytics_data=True,
+                                                           financial_data=True, translit=True)
             elif delivery_schema in ['FBS', 'RFBS']:
-                answer_fb = await api_user.get_posting_fbs(posting_number=posting_number,
-                                                           analytics_data=True,
-                                                           financial_data=True,
-                                                           translit=True)
+                answer_fb = await api_user.get_posting_fbs(posting_number=posting_number, analytics_data=True,
+                                                           financial_data=True, translit=True)
             else:
+                answer_fb = None
+            if answer_fb:
+                for fb_product in answer_fb.result.products:
+                    if str(fb_product.sku) == str(product.sku):
+                        vendor_code = fb_product.offer_id
+            if not vendor_code:
+                logger.warning(f'Не найден артикул для sku {sku} ({posting_number})')
                 continue
 
-            # Обработка информации о товаре
-            for product in answer_fb.result.products:
-                sku = str(product.sku)  # Артикул продукта внутри системы Ozon
-
-                if sku not in sku_transaction:
-                    continue
-
-                sku_transaction.remove(sku)
-
-                vendor_code = product.offer_id  # Артикул продукта
-                sale = round(float(product.price), 2)  # Стоимость продажи товара
-                quantities = product.quantity  # Количество
-
-                for financial_data_product in answer_fb.result.financial_data.products:
-                    if financial_data_product.product_id == product.sku:
-                        price = financial_data_product.price
-                        commission = round(financial_data_product.commission_amount, 2)
-                        customer_currency_code = financial_data_product.customer_currency_code
-                        customer_price = financial_data_product.customer_price
-
-                        if customer_currency_code == "RUB":
-                            bonus = round(price - customer_price, 2)
-                        elif customer_currency_code in ["KZT", "BYN"]:
-                            order_date = db_conn.get_order_date(posting_number=posting_number)
-
-                            if not order_date:
-                                bonus = None
-                                logger.warning(f'Не найден заказ в БД {posting_number}')
-                                break
-
-                            rate = db_conn.get_exchange_rate(from_date=order_date, currency=customer_currency_code)
-
-                            if not rate:
-                                bonus = None
-                                logger.warning(f'Не найден курс в БД {order_date} {customer_currency_code}')
-                                break
-
-                            if customer_currency_code == "KZT":
-                                bonus = round(price - (customer_price * rate / 100), 2)
-                            else:
-                                bonus = round(price - (customer_price * rate), 2)
-                        else:
-                            bonus = None
-                            logger.warning(f'Валюта {customer_currency_code}')
-                        break
-                else:
-                    commission = None
-                    bonus = None
-
-                if type_of_transaction == "cancelled":
-                    sale = -sale
-                    quantities = -len([item for item in operation.items if item.sku == product.sku])
-                    if commission:
-                        commission = round((commission / product.quantity) * quantities, 2)
-                    if bonus:
-                        bonus = round((bonus / product.quantity) * quantities, 2)
-
-                if sku not in list_sku:
-                    answer_info = await api_user.get_product_info_discounted(discounted_skus=[sku])
-                    for info in answer_info.items:
-                        if sku == str(info.discounted_sku):
-                            sku = str(info.sku)
-
-                # Добавление операции в список
-                list_operation.append(DataOperation(client_id=client_id,
-                                                    accrual_date=accrual_date,
-                                                    type_of_transaction=type_of_transaction,
-                                                    vendor_code=vendor_code,
-                                                    delivery_schema=delivery_schema,
-                                                    posting_number=posting_number,
-                                                    sku=sku,
-                                                    sale=sale,
-                                                    quantities=quantities,
-                                                    commission=commission,
-                                                    bonus=bonus))
-
-        # Получение дополнительных страниц результатов
-        if page >= answer.result.page_count:
-            break
-
-        page += 1
+        # Добавление операции в список
+        list_operation.append(DataOperation(client_id=client_id,
+                                            accrual_date=accrual_date,
+                                            type_of_transaction=type_of_transaction,
+                                            vendor_code=vendor_code,
+                                            delivery_schema=delivery_schema,
+                                            posting_number=posting_number,
+                                            sku=sku,
+                                            sale=sale,
+                                            quantities=quantity,
+                                            commission=commission,
+                                            bonus=bonus))
 
     logger.info(f"Количество записей операций: {len(list_operation)}")
     db_conn.add_oz_operation(list_operations=list_operation)
@@ -177,7 +167,7 @@ async def main_func_oz(retries: int = 6) -> None:
                 await add_oz_main_entry(db_conn=db_conn,
                                         client_id=client.client_id,
                                         api_key=client.api_key,
-                                        date_now=date_now)
+                                        date_now=date_now - timedelta(days=1))
             except ClientError as e:
                 logger.error(f'{e}')
     except OperationalError:

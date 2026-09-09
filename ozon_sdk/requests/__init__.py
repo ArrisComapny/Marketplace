@@ -1,4 +1,3 @@
-from .finance_transaction_list_request import *
 from .posting_fbs_get_request import *
 from .posting_fbo_get_request import *
 from .product_list_request import *
@@ -17,3 +16,4 @@ from .product_info_discounted_request import *
 from .product_related_sku_get_request import *
 from .product_info_stocks_request import *
 from .finance_realization_request import *
+from .finance_accrual_request import *
