@@ -59,7 +59,6 @@ async def add_oz_services(db_conn: OzDbConnection, client_id: str, api_key: str,
             types (dict): Справочник начислений {type_id: (name, description)}.
     """
     accrual_date = date_now.date()
-    logger.info(f"За дату <{accrual_date}>")
 
     list_services = []
     dict_sku = db_conn.get_oz_sku_vendor_code(client_id=client_id)
@@ -212,6 +211,7 @@ async def main_oz_services(retries: int = 6) -> None:
         for client in clients:
             try:
                 logger.info(f"Добавление в базу данных компании '{client.name_company}'")
+                logger.info(f"За период с <{date_now - timedelta(days=DAYS)}> до <{date_now - timedelta(microseconds=1)}>")
                 for day in range(DAYS, 0, -1):
                     await add_oz_services(db_conn=db_conn,
                                           client_id=client.client_id,

@@ -70,7 +70,7 @@ async def add_oz_main_entry(db_conn: OzDbConnection, client_id: str, api_key: st
     """
 
     accrual_date = date_now.date()
-    logger.info(f"За дату <{accrual_date}>")
+    logger.info(f"За период с <{date_now}> до <{date_now + timedelta(days=1) - timedelta(microseconds=1)}>")
 
     list_operation = []
     dict_sku = db_conn.get_oz_sku_vendor_code(client_id=client_id)
