@@ -1,5 +1,4 @@
 import asyncio
-import random
 import aiohttp
 import logging
 
@@ -7,11 +6,6 @@ from config import PROXY
 from ozon_sdk.errors import ClientError
 
 logger = logging.getLogger(__name__)
-
-# 429 у Ozon — короткое плавающее окно (десятки секунд), а не минуты: ждём недолго, со случайным
-# сдвигом, чтобы параллельные кабинеты не повторяли запрос в одну и ту же секунду
-RETRY_429_ATTEMPTS = 40
-RETRY_429_SLEEP = (10, 20)
 
 
 class OzonAsyncEngine:
@@ -42,7 +36,6 @@ class OzonAsyncEngine:
             return f"{self._base_url}/{url}"
 
     async def _perform_get_request(self, url, params, retry: int = 6):
-        retry_429 = RETRY_429_ATTEMPTS
         async with await self._get_session() as session:
             while retry != 0:
                 try:
@@ -51,12 +44,6 @@ class OzonAsyncEngine:
                                            timeout=120) as response:
                         if response.status in [404, 403]:
                             raise ClientError
-                        if response.status == 429 and retry_429 > 1:
-                            retry_429 -= 1
-                            logger.info(f"Получен ответ от {url} (429), повтор через несколько секунд "
-                                        f"(осталось попыток: {retry_429})")
-                            await asyncio.sleep(random.uniform(*RETRY_429_SLEEP))
-                            continue
                         if response.status != 200:
                             logger.info(f"Получен ответ от {url} ({response.status})")
                             logger.error(f"Попытка повторного запроса. Осталось попыток: {retry - 1}")
@@ -73,7 +60,6 @@ class OzonAsyncEngine:
             raise Exception
 
     async def _perform_post_request(self, url, params, retry: int = 6):
-        retry_429 = RETRY_429_ATTEMPTS
         async with await self._get_session() as session:
             while retry != 0:
                 try:
@@ -81,12 +67,6 @@ class OzonAsyncEngine:
                                             timeout=120) as response:
                         if response.status in [404, 403]:
                             raise ClientError
-                        if response.status == 429 and retry_429 > 1:
-                            retry_429 -= 1
-                            logger.info(f"Получен ответ от {url} (429), повтор через несколько секунд "
-                                        f"(осталось попыток: {retry_429})")
-                            await asyncio.sleep(random.uniform(*RETRY_429_SLEEP))
-                            continue
                         if response.status == 400:
                             r = await response.json()
                             # logger.error(f"400 от {url}: {r}")
