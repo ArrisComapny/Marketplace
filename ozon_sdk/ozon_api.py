@@ -30,6 +30,17 @@ class OzonApi:
         self._finance_accrual_by_day_api = self._api_factory.get_api(FinanceAccrualByDayResponse)
         self._finance_accrual_types_api = self._api_factory.get_api(FinanceAccrualTypesResponse)
         self._finance_accrual_postings_api = self._api_factory.get_api(FinanceAccrualPostingsResponse)
+        self._seller_info_api = self._api_factory.get_api(SellerInfoResponse)
+
+    async def get_seller_info(self) -> SellerInfoResponse:
+        """
+            Информация о кабинете продавца: компания, рейтинги и подписка. \n
+            Подписка — в answer.subscription: is_premium (действует ли Premium), type (название тарифа).
+            Метод /v1/seller/info, тело запроса пустое.
+        """
+        answer: SellerInfoResponse = await self._seller_info_api.post(SellerInfoRequest())
+
+        return answer
 
     async def get_finance_accrual_by_day(self, date: str, last_id: str = '') -> FinanceAccrualByDayResponse:
         """

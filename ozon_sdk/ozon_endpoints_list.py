@@ -24,6 +24,7 @@ class OzonAPIFactory:
         FinanceAccrualByDayResponse: '/v1/finance/accrual/by-day',
         FinanceAccrualTypesResponse: '/v1/finance/accrual/types',
         FinanceAccrualPostingsResponse: '/v1/finance/accrual/postings',
+        SellerInfoResponse: '/v1/seller/info',
     }
 
     def __init__(self, engine: OzonAsyncEngine):

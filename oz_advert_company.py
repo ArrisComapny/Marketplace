@@ -208,6 +208,16 @@ async def add_statistics_card_products(db_conn: OzDbConnection, client_id: str, 
     # Инициализация API-клиента Ozon
     api_user = OzonApi(client_id=client_id, api_key=api_key)
 
+    # Проверка подписки: без Premium analytics/data отдаёт только 2 метрики из 9
+    # и ограничен 50 запросами в сутки на кабинет — такой кабинет пропускаем
+    seller_info = await api_user.get_seller_info()
+    subscription = seller_info.subscription
+    if not subscription or not subscription.is_premium:
+        logger.warning(f"{name} Подписка Premium не подключена "
+                       f"(тариф: {subscription.type if subscription else 'нет данных'}) — "
+                       f"статистика карточек товара пропущена")
+        return
+
     while True:
         # Получение списка статистик по КТ
         answer = await api_user.get_analytics_data(date_from=(date_yesterday - timedelta(days=30)).isoformat(),
@@ -561,7 +571,7 @@ async def main_oz_advert(retries: int = 6) -> None:
 
         # Не более 5 кабинетов параллельно (лимит Ozon Performance:
         # 5 одновременных выгрузок статистики на организацию).
-        semaphore = asyncio.Semaphore(4)
+        semaphore = asyncio.Semaphore(15)
 
         async def statistic_limited(client):
             async with semaphore:

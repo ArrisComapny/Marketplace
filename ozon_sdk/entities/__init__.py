@@ -16,3 +16,4 @@ from .product_related_sku_get import *
 from .product_info_stocks import *
 from .finance_realization import *
 from .finance_accrual import *
+from .seller_info import *
