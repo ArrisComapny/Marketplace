@@ -16,7 +16,6 @@ class WBApi:
         self._fullstats_api = self._api_factory.get_api(FullstatsResponse)
         self._nm_report_detail_api = self._api_factory.get_api(NMReportDetailResponse)
         self._list_goods_filter_api = self._api_factory.get_api(ListGoodsFilterResponse)
-        self._supplier_report_detail_by_period_api = self._api_factory.get_api(SupplierReportDetailByPeriodResponse)
         self._paid_storage_api = self._api_factory.get_api(PaidStorageResponse)
         self._paid_storage_status_api = self._api_factory.get_api(PaidStorageStatusResponse)
         self._paid_storage_download_api = self._api_factory.get_api(PaidStorageDownloadResponse)
@@ -232,17 +231,6 @@ class WBApi:
         """
         request = ListGoodsFilterRequest(limit=limit, offset=offset, filterNmID=filter_nm_id)
         answer: ListGoodsFilterResponse = await self._list_goods_filter_api.get(query=request)
-
-        return answer
-
-    async def get_supplier_report_detail_by_period(self, date_from: str, date_to: str, limit: int = 100000,
-                                                   rrdid: int = 0) -> SupplierReportDetailByPeriodResponse:
-        request = SupplierReportDetailByPeriodRequest(dateFrom=date_from,
-                                                      limit=limit,
-                                                      dateTo=date_to,
-                                                      rrdid=rrdid)
-        answer: SupplierReportDetailByPeriodResponse = await self._supplier_report_detail_by_period_api.get(
-            query=request)
 
         return answer
 

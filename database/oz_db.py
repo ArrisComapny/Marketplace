@@ -152,33 +152,56 @@ class OzDbConnection(DbConnection):
             Args:
                 list_card_product (list[DataOzStatisticCardProduct]): Список данных статистики карточек товаров.
         """
+        if not list_card_product:
+            logger.info(f"Успешное добавление в базу {name}")
+            return
+
+        # Цены карточек одним запросом, а не SELECT на каждую строку
+        skus = list({row.sku for row in list_card_product})
+        prices = {sku: (price, discount_price) for sku, price, discount_price in
+                  self.session.query(OzCardProduct.sku, OzCardProduct.price, OzCardProduct.discount_price)
+                  .filter(OzCardProduct.sku.in_(skus)).all()}
+
+        # Дедупликация внутри пачки: Postgres не даёт обновить одну строку дважды одним запросом.
+        # Строки без карточки пропускаем — по ним не пройдёт внешний ключ на oz_card_product.
+        unique_rows = {}
         for row in list_card_product:
-            card_product = self.session.query(OzCardProduct).filter_by(sku=row.sku).first()
-            stmt = insert(OzStatisticCardProduct).values(
-                sku=row.sku,
-                date=row.date,
-                view_search=row.view_search,
-                view_card=row.view_card,
-                add_to_cart_from_search_count=row.add_to_cart_from_search_count,
-                add_to_cart_from_card_count=row.add_to_cart_from_card_count,
-                orders_count=row.orders_count,
-                orders_sum=row.orders_sum,
-                delivered_count=row.delivered_count,
-                returns_count=row.returns_count,
-                cancel_count=row.cancel_count,
-                price=card_product.price,
-                discount_price=card_product.discount_price
-            ).on_conflict_do_update(
+            if row.sku not in prices:
+                logger.warning(f"{name} sku {row.sku} нет в oz_card_product — статистика пропущена")
+                continue
+            price, discount_price = prices[row.sku]
+            unique_rows[(row.sku, row.date)] = {
+                'sku': row.sku,
+                'date': row.date,
+                'view_search': row.view_search,
+                'view_card': row.view_card,
+                'add_to_cart_from_search_count': row.add_to_cart_from_search_count,
+                'add_to_cart_from_card_count': row.add_to_cart_from_card_count,
+                'orders_count': row.orders_count,
+                'orders_sum': row.orders_sum,
+                'delivered_count': row.delivered_count,
+                'returns_count': row.returns_count,
+                'cancel_count': row.cancel_count,
+                'price': price,
+                'discount_price': discount_price,
+            }
+        rows = list(unique_rows.values())
+
+        # Пакетный upsert: лимит Postgres — 65535 параметров на запрос, при 13 колонках это ~5000 строк
+        chunk_size = 1000
+        for i in range(0, len(rows), chunk_size):
+            stmt = insert(OzStatisticCardProduct).values(rows[i:i + chunk_size])
+            stmt = stmt.on_conflict_do_update(
                 index_elements=['sku', 'date'],
-                set_={'view_search': row.view_search,
-                      'view_card': row.view_card,
-                      'add_to_cart_from_search_count': row.add_to_cart_from_search_count,
-                      'add_to_cart_from_card_count': row.add_to_cart_from_card_count,
-                      'orders_count': row.orders_count,
-                      'orders_sum': row.orders_sum,
-                      'delivered_count': row.delivered_count,
-                      'returns_count': row.returns_count,
-                      'cancel_count': row.cancel_count}
+                set_={'view_search': stmt.excluded.view_search,
+                      'view_card': stmt.excluded.view_card,
+                      'add_to_cart_from_search_count': stmt.excluded.add_to_cart_from_search_count,
+                      'add_to_cart_from_card_count': stmt.excluded.add_to_cart_from_card_count,
+                      'orders_count': stmt.excluded.orders_count,
+                      'orders_sum': stmt.excluded.orders_sum,
+                      'delivered_count': stmt.excluded.delivered_count,
+                      'returns_count': stmt.excluded.returns_count,
+                      'cancel_count': stmt.excluded.cancel_count}
             )
             self.session.execute(stmt)
         self.session.commit()
@@ -310,6 +333,39 @@ class OzDbConnection(DbConnection):
             self.session.execute(stmt)
         self.session.commit()
         logger.info(f"Успешное добавление в базу")
+
+    @retry_on_exception()
+    def get_oz_accrual_types(self) -> dict:
+        """
+            Кэш справочника начислений Ozon.
+
+            Returns:
+                dict: {type_id: (name, description)}.
+        """
+        rows = self.session.query(OzAccrualTypes.id, OzAccrualTypes.name, OzAccrualTypes.description).all()
+        return {type_id: (name, description) for type_id, name, description in rows}
+
+    @retry_on_exception()
+    def add_oz_accrual_types(self, types: dict) -> None:
+        """
+            Обновление кэша справочника начислений Ozon.
+
+            Args:
+                types (dict): {type_id: (name, description)}.
+        """
+        for type_id, (name, description) in types.items():
+            stmt = insert(OzAccrualTypes).values(
+                id=type_id,
+                name=name,
+                description=description or ''
+            ).on_conflict_do_update(
+                index_elements=['id'],
+                set_={'name': name, 'description': description or ''}
+            )
+            self.session.execute(stmt)
+        self.session.commit()
+        logger.info(f"Справочник начислений сохранён: {len(types)} типов")
+
 
     @retry_on_exception()
     def add_oz_orders(self, list_orders: list[DataOzOrder]) -> None:

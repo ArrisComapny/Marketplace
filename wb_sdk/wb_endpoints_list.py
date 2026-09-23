@@ -14,7 +14,6 @@ class WBAPIFactory:
         FullstatsResponse: 'https://advert-api.wildberries.ru/adv/v3/fullstats',
         NMReportDetailResponse: 'https://seller-analytics-api.wildberries.ru/api/v2/nm-report/detail',
         ListGoodsFilterResponse: 'https://discounts-prices-api.wildberries.ru/api/v2/list/goods/filter',
-        SupplierReportDetailByPeriodResponse: 'https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod',
         PaidStorageResponse: 'https://seller-analytics-api.wildberries.ru/api/v1/paid_storage',
         PaidStorageStatusResponse: 'https://seller-analytics-api.wildberries.ru/api/v1/paid_storage/tasks/{task_id}/status',
         PaidStorageDownloadResponse: 'https://seller-analytics-api.wildberries.ru/api/v1/paid_storage/tasks/{task_id}/download',
