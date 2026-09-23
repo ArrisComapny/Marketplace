@@ -67,7 +67,7 @@ async def get_campaign_ids(api_key: str) -> list[DataYaCampaigns]:
 
 async def report_generate(client_id: str, api_key: str, campaigns: list[DataYaCampaigns],
                           date_now: date) -> Union[str, None]:
-    date_from = date_now - timedelta(days=15)
+    date_from = date_now - timedelta(days=22)
     date_to = date_now - timedelta(days=1)
 
     report_id = None
@@ -176,7 +176,8 @@ async def add_yandex_report_entry(path_file: str, campaigns: list[DataYaCampaign
         'Персональный менеджер',
         'Доставка (средняя миля)',
         'Товарные баннеры',
-        'Размещение товаров и услуг'
+        'Размещение товаров и услуг',
+        'Подписки'
     ]
 
     try:
@@ -208,6 +209,16 @@ async def add_yandex_report_entry(path_file: str, campaigns: list[DataYaCampaign
                 if header_row:
                     df = pd.read_excel(path_file, sheet_name=sheet, header=header_row)
                     df = df.fillna('')
+
+                    cancel_col = None
+                    for column in df.columns:
+                        for sub_row in range(min(2, len(df))):
+                            val = df[column].iloc[sub_row]
+                            if isinstance(val, str) and 'Тариф при отмене по вине продавца' in val:
+                                cancel_col = column
+                                break
+                        if cancel_col is not None:
+                            break
 
                     for idx, row in df.iterrows():
                         try:
@@ -252,6 +263,11 @@ async def add_yandex_report_entry(path_file: str, campaigns: list[DataYaCampaign
                             service = next((v for v in row_data.get('service', {}).values() if v is not None), None)
                             vendor_code = next((v for v in row_data.get('vendor_code', {}).values() if v is not None),
                                                None)
+
+                            if cancel_col is not None and service:
+                                cancel_tariff = row.get(cancel_col, '')
+                                if isinstance(cancel_tariff, (int, float)):
+                                    service = f'{service} (отмена по вине продавца)'
 
                             if 'Платное хранение' in sheet:
                                 operation_type = 'Платное хранение'
