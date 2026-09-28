@@ -726,12 +726,32 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                                            "innerHorizontal": white_border,
                                            "innerVertical": white_border}})
 
-    # Закрепляем первые две строки и первые две колонки (Магазин + Артикул)
+    # Закрепляем первые 3 строки (2 шапки + строка тоталов) и первые две колонки
     all_requests.append({"updateSheetProperties": {
         "properties": {"sheetId": sheet_id,
-                       "gridProperties": {"frozenRowCount": 2, "frozenColumnCount": 2}},
+                       "gridProperties": {"frozenRowCount": 3, "frozenColumnCount": 2}},
         "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
     }})
+
+    # Строка тоталов (row 3, index 2): светлый серый фон + жирный текст.
+    all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
+                                                  "startRowIndex": 2,
+                                                  "endRowIndex": 3,
+                                                  "startColumnIndex": 0,
+                                                  "endColumnIndex": n_cols},
+                                        "cell": {"userEnteredFormat": {
+                                            "backgroundColor": COLOR_MAIN_ROW,
+                                            "textFormat": {"bold": True}}},
+                                        "fields": "userEnteredFormat(backgroundColor,textFormat.bold)"}})
+
+    # Чёрная нижняя граница 2px под строкой тоталов, чтобы визуально отделить от данных.
+    black_border_med = {"style": "SOLID_MEDIUM", "color": {"red": 0, "green": 0, "blue": 0}}
+    all_requests.append({"updateBorders": {"range": {"sheetId": sheet_id,
+                                                     "startRowIndex": 2,
+                                                     "endRowIndex": 3,
+                                                     "startColumnIndex": 0,
+                                                     "endColumnIndex": n_cols},
+                                           "bottom": black_border_med}})
 
     # Ширина колонок (33 столбца, Приёмка вставлена на позиции E):
     #   A=100 (Магазин), B=190 (Артикул),
@@ -774,11 +794,11 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                                         "fields": "userEnteredFormat.verticalAlignment"}})
 
     # Условное форматирование трёх колонок ABC (AA..AC, индексы 26..29):
-    # A=зелёный, B=жёлтый, C=красный
+    # A=зелёный, B=жёлтый, C=красный. Со строки 4 — тоталы в 3-й строке пропускаем.
     for value, color in (('A', COLOR_ABC_A), ('B', COLOR_ABC_B), ('C', COLOR_ABC_C)):
         all_requests.append({"addConditionalFormatRule": {
             "rule": {"ranges": [{"sheetId": sheet_id,
-                                 "startRowIndex": 2,
+                                 "startRowIndex": 3,
                                  "startColumnIndex": 26,
                                  "endColumnIndex": 29}],
                      "booleanRule": {"condition": {"type": "TEXT_EQ",
@@ -1281,12 +1301,13 @@ def update_week_sheet(db_conn: DbConnection):
 
     def abc_revenue_formula(row_idx: int) -> str:
         """ABC по выручке (Парето 80/15/5). Главные и дубли — отдельно (A пуст у главных,
-        там нет Магазина; у дублей в A стоит "WB Voyor" и т.п.). Выручка в колонке P."""
+        там нет Магазина; у дублей в A стоит "WB Voyor" и т.п.). Выручка в колонке P.
+        Диапазон начинается с 4-й строки: 1-2 — шапка, 3 — тоталы."""
         r = row_idx
         e = ABC_RANGE_END
-        kind = f'(($A$3:$A${e}="")=(A{r}=""))'
-        cum = f'СУММПРОИЗВ({kind}*($P$3:$P${e}>=P{r})*$P$3:$P${e})'
-        total = f'СУММПРОИЗВ({kind}*$P$3:$P${e})'
+        kind = f'(($A$4:$A${e}="")=(A{r}=""))'
+        cum = f'СУММПРОИЗВ({kind}*($P$4:$P${e}>=P{r})*$P$4:$P${e})'
+        total = f'СУММПРОИЗВ({kind}*$P$4:$P${e})'
         return (f'=ЕСЛИОШИБКА('
                 f'ЕСЛИ({cum}/{total}<=0,8;"A";'
                 f'ЕСЛИ({cum}/{total}<=0,95;"B";"C"))'
@@ -1294,12 +1315,13 @@ def update_week_sheet(db_conn: DbConnection):
 
     def abc_roi_formula(row_idx: int) -> str:
         """ABC по ROI (Парето 80/15/5). Главные и дубли — отдельно (A пуст у главных).
-        ROI в колонке L. Если L пустой/не число — C."""
+        ROI в колонке L. Если L пустой/не число — C.
+        Диапазон начинается с 4-й строки: 1-2 — шапка, 3 — тоталы."""
         r = row_idx
         e = ABC_RANGE_END
-        kind = f'(($A$3:$A${e}="")=(A{r}=""))'
-        cum = f'СУММПРОИЗВ({kind}*($L$3:$L${e}>=L{r})*$L$3:$L${e})'
-        total = f'СУММПРОИЗВ({kind}*$L$3:$L${e})'
+        kind = f'(($A$4:$A${e}="")=(A{r}=""))'
+        cum = f'СУММПРОИЗВ({kind}*($L$4:$L${e}>=L{r})*$L$4:$L${e})'
+        total = f'СУММПРОИЗВ({kind}*$L$4:$L${e})'
         return (f'=ЕСЛИ(НЕ(ЕЧИСЛО(L{r}));"C";'
                 f'ЕСЛИОШИБКА('
                 f'ЕСЛИ({cum}/{total}<=0,8;"A";'
@@ -1332,8 +1354,20 @@ def update_week_sheet(db_conn: DbConnection):
     def gmroi_year_formula(row_idx: int) -> str:
         return f'=ЕСЛИ(N{row_idx}="";"";N{row_idx}*52)'
 
-    # Собираем строки таблицы
-    data: list[list] = [headers1, headers2]
+    # Собираем строки таблицы.
+    # Строка 3 (индекс 2) — тоталы по всем мейн-артикулам: суммы FBO/FBS/Приёмка/Итого/
+    # заказов и оборачиваемости, рассчитанные по строкам с пустой колонкой A (только мейны).
+    # Данные (мейны + дубли) начинаются с 4-й строки.
+    totals_row: list = ['', 'ВСЕГО (мейны)']
+    for letter in ('C', 'D', 'E', 'F', 'G', 'H'):
+        totals_row.append(f'=СУММЕСЛИ($A$4:$A;"";{letter}$4:{letter})')
+    # Оборач. Вчера/Неделя из тоталов: F/G и F*7/H соответственно.
+    totals_row.append('=ЕСЛИ(G3=0;"";ОКРУГЛ(F3/G3;0))')
+    totals_row.append('=ЕСЛИ(H3=0;"";ОКРУГЛ(F3*7/H3;0))')
+    # Остальные колонки (K..AG, всего 33 столбца) пустые.
+    totals_row.extend([''] * (33 - len(totals_row)))
+
+    data: list[list] = [headers1, headers2, totals_row]
     dub_ranges: list[tuple[int, int]] = []
 
     def components_cells(comps: dict | None) -> list:
@@ -1480,7 +1514,7 @@ def main(retries: int = 6) -> None:
         db_conn = DbConnection()
         db_conn.start_db()
 
-        stat_orders_update(db_conn=db_conn, days=1)
+        # stat_orders_update(db_conn=db_conn, days=1)
         update_week_sheet(db_conn=db_conn)
     except OperationalError:
         logger.error(f'Не доступна база данных. Осталось попыток подключения: {retries - 1}')
