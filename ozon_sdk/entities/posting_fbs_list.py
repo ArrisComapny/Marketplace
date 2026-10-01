@@ -158,13 +158,13 @@ class PostingFBSListRequirements(BaseEntity):
         (страна-изготовитель, ГТД, РНПТ, маркировка и т.д.), чтобы перевести
         отправление в следующий статус.
     """
-    products_requiring_change_country: list[str] = []
-    products_requiring_country: list[str] = []
-    products_requiring_gtd: list[str] = []
-    products_requiring_imei: list[str] = []
-    products_requiring_jw_uin: list[str] = []
-    products_requiring_mandatory_mark: list[str] = []
-    products_requiring_rnpt: list[str] = []
+    products_requiring_change_country: list[int] = []
+    products_requiring_country: list[int] = []
+    products_requiring_gtd: list[int] = []
+    products_requiring_imei: list[int] = []
+    products_requiring_jw_uin: list[int] = []
+    products_requiring_mandatory_mark: list[int] = []
+    products_requiring_rnpt: list[int] = []
 
 
 class PostingFBSListTarifficationCharge(BaseEntity):
