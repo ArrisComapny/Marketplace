@@ -210,7 +210,7 @@ AND yr.operation_type = ANY(ARRAY['Размещение товаров на ви
                                   'Приём платежа',
                                   'Перевод платежа',
                                   'Программа лояльности и отзывы'])
-AND yr.service <> ALL(ARRAY['Доставка невыкупов и возвратов'])
+AND yr.service <> ALL(ARRAY['Доставка невыкупов и возвратов', 'Размещение товара (отмена по вине продавца)'])
 AND yo.order_date >= '2025-04-01'
 GROUP BY yo.order_date, c.entrepreneur, yr.vendor_code
 ORDER BY yo.order_date DESC, c.entrepreneur, yr.vendor_code
