@@ -1,5 +1,7 @@
 import logging
+import datetime
 
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 
 from .models import *
@@ -32,36 +34,64 @@ class YaDbConnection(DbConnection):
             Args:
                 list_operations (list[DataOperation]): Список данных об операциях.
         """
+        if not list_operations:
+            return
+
+        def to_values(row: DataOperation) -> dict:
+            return {'client_id': row.client_id,
+                    'accrual_date': row.accrual_date,
+                    'type_of_transaction': row.type_of_transaction,
+                    'vendor_code': row.vendor_code,
+                    'posting_number': row.posting_number,
+                    'delivery_schema': row.delivery_schema,
+                    'sku': row.sku,
+                    'sale': row.sale,
+                    'quantities': row.quantities,
+                    'bonus': row.bonus}
+
+        unique_rows = {}
         for row in list_operations:
-            stmt = insert(YaMain).values(
-                client_id=row.client_id,
-                accrual_date=row.accrual_date,
-                type_of_transaction=row.type_of_transaction,
-                vendor_code=row.vendor_code,
-                posting_number=row.posting_number,
-                delivery_schema=row.delivery_schema,
-                sku=row.sku,
-                sale=row.sale,
-                quantities=row.quantities,
-                bonus=row.bonus
-            ).on_conflict_do_update(
+            key = (row.accrual_date, row.client_id, row.type_of_transaction, row.posting_number, row.sku)
+            unique_rows[key] = to_values(row)
+        rows = list(unique_rows.values())
+
+        chunk_size = 1000
+        for i in range(0, len(rows), chunk_size):
+            stmt = insert(YaMain).values(rows[i:i + chunk_size])
+            stmt = stmt.on_conflict_do_update(
                 index_elements=['accrual_date', 'client_id', 'type_of_transaction', 'posting_number', 'sku'],
-                set_={'sale': row.sale,
-                      'quantities': row.quantities,
-                      'bonus': row.bonus}
+                set_={'sale': stmt.excluded.sale,
+                      'quantities': stmt.excluded.quantities,
+                      'bonus': stmt.excluded.bonus,
+                      # Освежаем имя артикула: при переименовании карточки sku (marketSku)
+                      # не меняется, а vendor_code в свежей выгрузке уже новый
+                      'vendor_code': stmt.excluded.vendor_code,
+                      'delivery_schema': stmt.excluded.delivery_schema}
             )
             self.session.execute(stmt)
         self.session.commit()
         logger.info(f"Успешное добавление в базу")
 
     @retry_on_exception()
-    def add_ya_report(self, list_reports: list[DataYaReport]) -> None:
+    def add_ya_report(self, list_reports: list[DataYaReport], client_id: str,
+                      date_from: datetime.date, date_to: datetime.date) -> None:
         """
-            Добавление в базу данных записи об операциях с товарами.
+            Транзакционная замена периода: удаляет строки кабинета за период и вставляет
+            свежие одной транзакцией. Повторная заливка не плодит дубли даже при смене
+            vendor_code (переименование карточки), статьи или campaign_id — старые строки
+            периода всегда удаляются целиком. Откат при ошибке оставляет старые данные.
 
             Args:
                 list_reports (list[DataYaReport]): Список данных об операциях.
+                client_id (str): ID кабинета, чей период заменяем.
+                date_from (date): Начало периода (включительно).
+                date_to (date): Конец периода (включительно).
         """
+        if not list_reports:
+            logger.warning('Пустой отчёт — период не очищаю, чтобы не потерять данные')
+            return
+
+        # Новые пары (статья, услуга) заводим в справочник
         type_services = set(self.session.query(YaTypeReport.operation_type,
                                                YaTypeReport.service).all())
         for row in list_reports:
@@ -71,28 +101,53 @@ class YaDbConnection(DbConnection):
                                         type_name='new')
                 self.session.add(new_type)
                 type_services.add((row.operation_type, row.service or ''))
-            stmt = insert(YaReport).values(
-                client_id=row.client_id,
-                campaign_id=row.campaign_id,
-                posting_number=row.posting_number or '',
-                operation_type=row.operation_type,
-                vendor_code=row.vendor_code or '',
-                service=row.service or '',
-                date=row.date,
-                cost=row.cost
-            ).on_conflict_do_update(
-                index_elements=['client_id',
-                                'campaign_id',
-                                'date',
-                                'posting_number',
-                                'vendor_code',
-                                'operation_type',
-                                'service'],
-                set_={'cost': row.cost}
-            )
-            self.session.execute(stmt)
         self.session.commit()
-        logger.info(f"Успешное добавление в базу")
+
+        def to_values(row: DataYaReport) -> dict:
+            return {'client_id': row.client_id,
+                    'campaign_id': row.campaign_id,
+                    'date': row.date,
+                    'posting_number': row.posting_number or '',
+                    'vendor_code': row.vendor_code or '',
+                    'operation_type': row.operation_type,
+                    'service': row.service or '',
+                    'cost': row.cost}
+
+        # Строки с датой вне периода отбрасываем: в отчёте попадаются услуги с датой
+        # раньше запрошенного окна — их запишет тот прогон, чей это период. Иначе
+        # соседние куски перетирали бы друг друга.
+        skipped = 0
+        unique_rows = {}
+        for row in list_reports:
+            if not (date_from <= row.date <= date_to):
+                skipped += 1
+                continue
+            key = (row.client_id, row.campaign_id, row.date, row.posting_number or '',
+                   row.vendor_code or '', row.operation_type, row.service or '')
+            unique_rows[key] = to_values(row)
+        rows = list(unique_rows.values())
+        if skipped:
+            logger.info(f'Строк с датой вне периода пропущено: {skipped}')
+
+        # Движок работает в AUTOCOMMIT — для атомарного DELETE+INSERT открываем
+        # соединение с обычной транзакцией
+        connection = self.engine.connect().execution_options(isolation_level='READ COMMITTED')
+        try:
+            with connection.begin():
+                connection.execute(
+                    text("""DELETE FROM ya_report
+                            WHERE client_id = :client_id AND date BETWEEN :date_from AND :date_to"""),
+                    {'client_id': client_id, 'date_from': date_from, 'date_to': date_to}
+                )
+
+                # Пакетная вставка: лимит Postgres — 65535 параметров на запрос,
+                # при 8 колонках это ~8000 строк; берём 1000 с запасом.
+                chunk_size = 1000
+                for i in range(0, len(rows), chunk_size):
+                    connection.execute(insert(YaReport).values(rows[i:i + chunk_size]))
+        finally:
+            connection.close()
+        logger.info(f"Успешное добавление в базу: период заменён, строк: {len(rows)}")
 
     @retry_on_exception()
     def add_ya_report_shows(self, list_reports: list[DataYaReportShows]) -> None:

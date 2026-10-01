@@ -2,7 +2,7 @@ import asyncio
 import nest_asyncio
 import logging
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 from sqlalchemy.exc import OperationalError
 
 from data_classes import DataOperation, DataYaCampaigns
@@ -14,6 +14,12 @@ nest_asyncio.apply()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(message)s')
 logger = logging.getLogger(__name__)
+
+# Разовый бэкфилл по дате ОФОРМЛЕНИЯ заказа: задайте обе даты (date(ГГГГ, М, Д)) и
+# запустите скрипт, после прогона верните None. Внимание: campaigns/orders с fromDate
+# может молча терять заказы — после бэкфилла добирайте хвосты скриптом ya_backfill_orphans.py.
+BACKFILL_FROM = None
+BACKFILL_TO = None
 
 
 async def get_campaign_ids(api_key: str) -> list[DataYaCampaigns]:
@@ -29,13 +35,17 @@ async def get_campaign_ids(api_key: str) -> list[DataYaCampaigns]:
     return list_campaigns
 
 
-async def get_orders(api_key: str, campaign_id: str, updated_at_from: str, updated_at_to: str) -> list[int]:
+async def get_orders(api_key: str, campaign_id: str,
+                     updated_at_from: str = None, updated_at_to: str = None,
+                     from_date: str = None, to_date: str = None) -> list[int]:
     list_orders = []
     page = 1
 
     api_user = YandexApi(api_key=api_key)
     while True:
         answer_orders = await api_user.get_campaigns_orders(campaign_id=campaign_id,
+                                                            from_date=from_date,
+                                                            to_date=to_date,
                                                             updated_at_from=updated_at_from,
                                                             updated_at_to=updated_at_to,
                                                             status=['DELIVERED'],
@@ -52,7 +62,9 @@ async def get_orders(api_key: str, campaign_id: str, updated_at_from: str, updat
     return list_orders
 
 
-async def get_operations(client_id: str, campaign_id: str, api_key: str, updated_at_from: str, updated_at_to: str) \
+async def get_operations(client_id: str, campaign_id: str, api_key: str,
+                         updated_at_from: str = None, updated_at_to: str = None,
+                         from_date: str = None, to_date: str = None) \
         -> list[DataOperation]:
     """
         Получает список операций для указанного клиента за определенный период времени.
@@ -81,7 +93,9 @@ async def get_operations(client_id: str, campaign_id: str, api_key: str, updated
     list_orders = await get_orders(campaign_id=campaign_id,
                                    api_key=api_key,
                                    updated_at_from=updated_at_from,
-                                   updated_at_to=updated_at_to)
+                                   updated_at_to=updated_at_to,
+                                   from_date=from_date,
+                                   to_date=to_date)
     if not list_orders:
         return list_operation
 
@@ -153,15 +167,30 @@ async def add_yandex_main_entry(db_conn: YaDbConnection, client_id: str, campaig
             api_key (str): API KEY кабинета.
             date_now (datetime): Дата, для которой добавляются записи.
     """
-    start = date_now - timedelta(days=10)
-    end = date_now - timedelta(microseconds=1)
+    if BACKFILL_FROM and BACKFILL_TO:
+        operations = []
+        chunk_start = BACKFILL_FROM
+        while chunk_start <= BACKFILL_TO:
+            chunk_end = min(chunk_start + timedelta(days=29), BACKFILL_TO)
+            logger.info(f"Бэкфилл по дате оформления с <{chunk_start}> до <{chunk_end}>")
+            operations += await get_operations(client_id=client_id,
+                                               campaign_id=campaign_id,
+                                               api_key=api_key,
+                                               from_date=chunk_start.strftime('%d-%m-%Y'),
+                                               to_date=chunk_end.strftime('%d-%m-%Y'))
+            chunk_start = chunk_end + timedelta(days=1)
+    else:
+        # 30 дней вместо 10: разовые сбои загрузчика перестают превращаться
+        # в невосполнимые потери — у updatedAt-фильтра глубина ~30 дней
+        start = date_now - timedelta(days=30)
+        end = date_now - timedelta(microseconds=1)
 
-    logger.info(f"За период с <{start}> до <{end}>")
-    operations = await get_operations(client_id=client_id,
-                                      campaign_id=campaign_id,
-                                      api_key=api_key,
-                                      updated_at_from=start.isoformat(),
-                                      updated_at_to=end.isoformat())
+        logger.info(f"За период с <{start}> до <{end}>")
+        operations = await get_operations(client_id=client_id,
+                                          campaign_id=campaign_id,
+                                          api_key=api_key,
+                                          updated_at_from=start.isoformat(),
+                                          updated_at_to=end.isoformat())
 
     logger.info(f"Количество записей: {len(operations)}")
     db_conn.add_ya_operation(list_operations=operations)

@@ -24,6 +24,12 @@ warnings.simplefilter(action='ignore', category=UserWarning)
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
+# Разовый бэкфилл: задайте обе даты (date(ГГГГ, М, Д)) и запустите скрипт, период
+# зальётся кусками по 30 дней с заменой. После прогона верните None — штатный режим
+# (ежедневно, последние 23 дня).
+BACKFILL_FROM = None
+BACKFILL_TO = None
+
 
 def download_file(url: str, file_name: str) -> Union[str, None]:
     try:
@@ -66,10 +72,7 @@ async def get_campaign_ids(api_key: str) -> list[DataYaCampaigns]:
 
 
 async def report_generate(client_id: str, api_key: str, campaigns: list[DataYaCampaigns],
-                          date_now: date) -> Union[str, None]:
-    date_from = date_now - timedelta(days=15)
-    date_to = date_now - timedelta(days=1)
-
+                          date_from: date, date_to: date) -> Union[str, None]:
     report_id = None
     link_report = None
     substatus = {'NO_DATA': 'Для такого отчета нет данных.',
@@ -353,19 +356,34 @@ async def main_yandex_report(retries: int = 6) -> None:
 
             date_now = date.today()
 
+            if BACKFILL_FROM and BACKFILL_TO:
+                periods = []
+                chunk_start = BACKFILL_FROM
+                while chunk_start <= BACKFILL_TO:
+                    chunk_end = min(chunk_start + timedelta(days=29), BACKFILL_TO)
+                    periods.append((chunk_start, chunk_end))
+                    chunk_start = chunk_end + timedelta(days=1)
+            else:
+                periods = [(date_now - timedelta(days=23), date_now - timedelta(days=1))]
+
             for client_id, campaigns in client_dict.items():
 
                 client = db_conn.get_client(client_id=client_id)
 
-                logger.info(f"За дату {date_now - timedelta(days=1)}")
                 logger.info(f"Добавление в базу данных компании '{client.name_company}'")
-                path_file = await report_generate(client_id=client_id,
-                                                  campaigns=campaigns,
-                                                  api_key=client.api_key,
-                                                  date_now=date_now)
-                if path_file is not None:
-                    list_reports = await add_yandex_report_entry(path_file=path_file, campaigns=campaigns)
-                    db_conn.add_ya_report(list_reports=list_reports)
+                for date_from, date_to in periods:
+                    logger.info(f"Отчёт услуг за период с {date_from} по {date_to}")
+                    path_file = await report_generate(client_id=client_id,
+                                                      campaigns=campaigns,
+                                                      api_key=client.api_key,
+                                                      date_from=date_from,
+                                                      date_to=date_to)
+                    if path_file is not None:
+                        list_reports = await add_yandex_report_entry(path_file=path_file, campaigns=campaigns)
+                        db_conn.add_ya_report(list_reports=list_reports,
+                                              client_id=client_id,
+                                              date_from=date_from,
+                                              date_to=date_to)
     except OperationalError:
         logger.error(f'Не доступна база данных. Осталось попыток подключения: {retries - 1}')
         if retries > 0:
