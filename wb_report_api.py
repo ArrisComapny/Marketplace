@@ -9,6 +9,7 @@ import requests
 from datetime import datetime, timedelta, timezone, date
 from sqlalchemy.exc import OperationalError
 
+from wb_sdk.errors import ClientError
 from wb_sdk.wb_api import WBApi
 from wb_sdk.entities import SalesReportDetailed
 from database import WBDbConnection
