@@ -421,6 +421,36 @@ class WBDbConnection(DbConnection):
         logger.info(f"Успешное добавление в базу")
 
     @retry_on_exception()
+    def get_wb_report_daily_penalties(self, date_from: date, date_to: date) -> list[tuple]:
+        """
+            Суммы штрафов из wb_report_daily по кабинетам за период (по операционному дню).
+
+            В operation_date лежит дата СОЗДАНИЯ отчёта, а отчёт покрывает предыдущий
+            день — поэтому операционный день считаем как operation_date - 1.
+
+            Args:
+                date_from (date): Начало периода (включительно).
+                date_to (date): Конец периода (не включительно).
+
+            Returns:
+                List[tuple]: entrepreneur, name_company, сумма штрафов.
+        """
+        query = text("""
+            SELECT c.entrepreneur, c.name_company,
+                   round(sum(CASE WHEN wrd.deduction <> 0 THEN wrd.deduction
+                                  ELSE wrd.penalty END)::numeric, 2) AS penalty_sum
+            FROM wb_report_daily wrd
+            JOIN clients c ON c.client_id = wrd.client_id
+            WHERE wrd.supplier_oper_name = 'Штраф'
+              AND (wrd.operation_date - 1) >= :date_from
+              AND (wrd.operation_date - 1) < :date_to
+            GROUP BY c.entrepreneur, c.name_company
+            HAVING sum(CASE WHEN wrd.deduction <> 0 THEN wrd.deduction ELSE wrd.penalty END) <> 0
+            ORDER BY penalty_sum DESC
+        """)
+        return self.session.execute(query, {'date_from': date_from, 'date_to': date_to}).fetchall()
+
+    @retry_on_exception()
     def get_wb_report_daily_ids(self, client_id: str) -> list[str]:
         """
             Список ID отчётов, уже загруженных в wb_report_daily по кабинету.

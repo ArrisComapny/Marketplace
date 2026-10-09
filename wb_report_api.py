@@ -9,7 +9,6 @@ import requests
 from datetime import datetime, timedelta, timezone, date
 from sqlalchemy.exc import OperationalError
 
-from wb_sdk.errors import ClientError
 from wb_sdk.wb_api import WBApi
 from wb_sdk.entities import SalesReportDetailed
 from database import WBDbConnection
@@ -97,6 +96,36 @@ def post_alerts(name_company: str, entrepreneur: str, report_date: date,
         request_telegram(text, disable_notification)
     except Exception as e:
         logger.error(f"При отправке сообщения в Telegram произошла непредвиденная ошибка: {str(e)}")
+
+
+MONTHS_RU = {1: 'январь', 2: 'февраль', 3: 'март', 4: 'апрель', 5: 'май', 6: 'июнь',
+             7: 'июль', 8: 'август', 9: 'сентябрь', 10: 'октябрь', 11: 'ноябрь', 12: 'декабрь'}
+
+
+def post_penalties_summary(db_conn: WBDbConnection) -> None:
+    """Шлёт в Telegram итоги штрафов: за вчера и с начала месяца, к которому
+    относится вчерашний день."""
+    try:
+        yesterday = date.today() - timedelta(days=1)
+        month_start = yesterday.replace(day=1)
+
+        def total(date_from: date, date_to: date) -> float:
+            rows = db_conn.get_wb_report_daily_penalties(date_from=date_from, date_to=date_to)
+            return float(sum(row[2] for row in rows))
+
+        total_yesterday = total(yesterday, yesterday + timedelta(days=1))
+        total_month = total(month_start, yesterday + timedelta(days=1))
+
+        def fmt(value: float) -> str:
+            return f"{value:,.0f}".replace(",", " ")
+
+        text = (f"*Итого штрафов за вчера ({yesterday.strftime('%d.%m')})*\n"
+                f"{fmt(total_yesterday)}\n\n"
+                f"*Итого штрафов с начала месяца ({MONTHS_RU[month_start.month]})*\n"
+                f"{fmt(total_month)}")
+        request_telegram(text, disable_notification=True)
+    except Exception as e:
+        logger.error(f"При отправке сводки штрафов произошла ошибка: {str(e)}")
 
 
 def to_msk_date(value: datetime) -> date:
@@ -298,6 +327,9 @@ async def main_wb_report_api(retries: int = 6) -> None:
 
         # Лимит запросов у finance-api на кабинет, поэтому кабинеты идут параллельно
         await asyncio.gather(*(run_client(client) for client in clients))
+
+        # Сводка: итого штрафов за вчера и с начала месяца
+        post_penalties_summary(db_conn=db_conn)
     except OperationalError:
         logger.error(f'Не доступна база данных. Осталось попыток подключения: {retries - 1}')
         if retries > 0:
