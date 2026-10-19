@@ -967,10 +967,12 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
 
 
 def update_week_sheet(db_conn: DbConnection):
+    logger.info('=== update_week_sheet: старт ===')
     spreadsheet = initialize_google_sheet()
 
     worksheet_week = spreadsheet.worksheet(WEEK)
     worksheet_sample = spreadsheet.worksheet(SAMPLE)
+    logger.info('Открыт spreadsheet "%s", листы %s/%s готовы', PROJECT, SAMPLE, WEEK)
 
     # Стоки — 4 подколонки (FBO, FBS, Приёмка, Итого). Показатели — 21 подколонка
     # (добавили "Стоимость стока" между Себесом и Комиссией — helper для честного GMROI
@@ -996,12 +998,18 @@ def update_week_sheet(db_conn: DbConnection):
     # vendors_map_ci — case-insensitive: ключ и main_vendor приведены к нижнему регистру.
     # В шаблоне артикулы могут быть в любом регистре (например "5002/5Лопрыск"), а в БД
     # они нормализованы в lower — сравниваем без учёта регистра.
+    logger.info('[1/7] Загружаю vendors_map из БД...')
     vendors_map_raw = db_conn.get_vendors_map()
     vendors_map: dict[str, tuple[str, str]] = {
         k.lower(): ((v[0] or '').lower(), v[1]) for k, v in vendors_map_raw.items()
     }
+    logger.info('vendors_map: %d артикулов (main=%d, maindouble=%d)',
+                len(vendors_map),
+                sum(1 for _, (_mv, _t) in vendors_map.items() if _t == 'main'),
+                sum(1 for _, (_mv, _t) in vendors_map.items() if _t == 'maindouble'))
 
     # Читаем колонки шаблона A..D одним запросом: A=Артикул, B=Комментарий, C=Кол-во, D=Дата прихода
+    logger.info('[2/7] Читаю шаблон (A:D)...')
     template_rows = worksheet_sample.get('A:D')
     template_info: dict[str, tuple[str, str, str]] = {}
     template_vendors: list[str] = []
@@ -1026,23 +1034,34 @@ def update_week_sheet(db_conn: DbConnection):
         if a in vendors_map and a not in seen:
             template_vendors.append(a)
             seen.add(a)
+    logger.info('Из шаблона взято %d уникальных артикулов (найдены в vendors_map); '
+                'строк в template_info: %d', len(template_vendors), len(template_info))
 
-    # Группируем артикулы по главному: {main_vendor: [главный, ...дубли]}
+    # Инвертированный индекс по всей БД: main_vendor → [все артикулы блока, включая
+    # сам main]. Нужен, чтобы для каждого артикула из шаблона подтянуть ПОЛНЫЙ блок
+    # (все дубли того же main), даже если самих этих дублей в шаблоне нет.
+    main_to_all: dict[str, list[str]] = {}
+    for v, (mv, _tp) in vendors_map.items():
+        main_to_all.setdefault(mv, []).append(v)
+    # Внутри каждого блока сортируем дубли по алфавиту для стабильности (main
+    # ставится отдельно первой строкой ниже).
+    for mv in main_to_all:
+        main_to_all[mv].sort()
+
+    # Группируем: для каждого артикула из шаблона определяем его main и берём ВЕСЬ
+    # связанный блок из main_to_all. Один main → один блок (повторные упоминания
+    # дублей того же main в шаблоне не плодят повторные блоки).
     blocks: dict[str, list[str]] = {}
     for vendor in template_vendors:
-        main_vendor, type_vendor = vendors_map[vendor]
-        if type_vendor == 'main':
-            blocks.setdefault(vendor, [])
-            if vendor not in blocks[vendor]:
-                blocks[vendor].insert(0, vendor)
-        elif type_vendor == 'maindouble':
-            blocks.setdefault(main_vendor, [])
-            blocks[main_vendor].append(vendor)
-
-    # Главный — первой строкой блока
-    for main_vendor, related in blocks.items():
-        if main_vendor in related:
-            blocks[main_vendor] = [main_vendor] + [v for v in related if v != main_vendor]
+        main_vendor, _type = vendors_map[vendor]
+        if main_vendor in blocks:
+            continue
+        group = main_to_all.get(main_vendor, [vendor])
+        # Main — всегда первым; остальные — после.
+        blocks[main_vendor] = [main_vendor] + [v for v in group if v != main_vendor]
+    _total_in_blocks = sum(len(v) for v in blocks.values())
+    logger.info('[3/7] Сформировано %d блоков (мейнов), всего артикулов в них: %d',
+                len(blocks), _total_in_blocks)
 
     # Полная группа артикулов по каждому мейну (из vendors_map), включая варианты,
     # которых нет в шаблоне. FBS — общий пул на группу: в БД он может лежать под
@@ -1075,24 +1094,35 @@ def update_week_sheet(db_conn: DbConnection):
 
     # Во всех картах ключи vendor_code нормализуем в нижний регистр — иначе
     # данные из БД (которые могут отличаться регистром от шаблона) не будут находиться.
+    logger.info('[4/7] Загружаю стоки на сегодня (%s)...', today.isoformat())
     stocks = db_conn.get_stocks_detail(from_date=today)
     stock_map: dict[tuple[str, str], int] = {}
     for s in stocks:
         key = (s.client, (s.vendor_code or '').lower())
         stock_map[key] = stock_map.get(key, 0) + s.quantity
+    logger.info('    стоки сегодня: %d записей, %d ключей (client, vendor)',
+                len(stocks), len(stock_map))
 
     # Сток на начало периода (фактический снимок неделю назад).
-    stocks_start = db_conn.get_stocks_detail(from_date=today - timedelta(days=7))
+    _week_ago = today - timedelta(days=7)
+    logger.info('    загружаю стоки на начало недели (%s)...', _week_ago.isoformat())
+    stocks_start = db_conn.get_stocks_detail(from_date=_week_ago)
     stock_start_map: dict[tuple[str, str], int] = {}
     for s in stocks_start:
         key = (s.client, (s.vendor_code or '').lower())
         stock_start_map[key] = stock_start_map.get(key, 0) + s.quantity
+    logger.info('    стоки на начало: %d записей, %d ключей',
+                len(stocks_start), len(stock_start_map))
 
     # Заказы: вчера и за последние 7 дней (по день, кончая вчерашним)
     yesterday = today - timedelta(days=1)
     week_start = today - timedelta(days=7)
+    logger.info('[5/7] Загружаю заказы: вчера (%s) и неделя (%s..%s)...',
+                yesterday.isoformat(), week_start.isoformat(), yesterday.isoformat())
     yesterday_orders = db_conn.get_orders(from_date=yesterday)
     week_orders = db_conn.get_orders(from_date=week_start, to_date=yesterday)
+    logger.info('    заказов: вчера=%d, за неделю=%d',
+                len(yesterday_orders), len(week_orders))
 
     yesterday_map: dict[tuple[str, str], int] = {}
     for o in yesterday_orders:
@@ -1120,7 +1150,10 @@ def update_week_sheet(db_conn: DbConnection):
     PROFIT_FIELDS = ('sale', 'cost', 'commission', 'acquiring',
                      'logistics', 'storage', 'advertising', 'other', 'tac',
                      'quantities', 'profit')
+    logger.info('[6/7] Загружаю profit за %s..%s (это тяжёлый запрос, ~0.5-60с)...',
+                week_start.isoformat(), yesterday.isoformat())
     profit_records = db_conn.get_profit(from_date=week_start, to_date=yesterday)
+    logger.info('    получено %d записей прибыли', len(profit_records))
     profit_map: dict[tuple[str, str], dict[str, float]] = {}
     for p in profit_records:
         key = (p.client_id, p.vendor_code)
@@ -1399,6 +1432,7 @@ def update_week_sheet(db_conn: DbConnection):
 
     data: list[list] = [headers1, headers2, totals_row]
     dub_ranges: list[tuple[int, int]] = []
+    logger.info('[7/7] Собираю строки Недельки (блоки: %d)...', len(blocks))
 
     def components_cells(comps: dict | None) -> list:
         """9 столбцов P..X: Выручка, Себес, Комиссия, Эквайринг, Логистика, Хранение,
@@ -1539,14 +1573,20 @@ def update_week_sheet(db_conn: DbConnection):
         "startColumnIndex": 0,
     }}}]})
 
+    logger.info('Собрано: блоков с данными %d, строк всего %d (вкл. 2 шапки + тоталы)',
+                len(dub_ranges), len(data))
+
+    logger.info('Очищаю лист "%s" и записываю данные...', WEEK)
     worksheet_week.clear()
     worksheet_week.update(range_name='A1', values=data, value_input_option=ValueInputOption("USER_ENTERED"))
 
+    logger.info('Применяю форматирование...')
     format_week_sheet(worksheet=worksheet_week,
                       spreadsheet=spreadsheet,
                       headers1=headers1,
                       headers2=headers2,
                       dub_ranges=dub_ranges)
+    logger.info('=== update_week_sheet: готово ===')
 
 
 def main(retries: int = 6) -> None:
