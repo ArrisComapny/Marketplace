@@ -149,14 +149,16 @@ class DbConnection:
         return [row[0] for row in result]
 
     @retry_on_exception()
-    def get_vendors_map(self) -> dict[str, tuple[str, str]]:
+    def get_vendors_map(self) -> dict[str, tuple[str, str, str]]:
+        """Справочник артикулов: vendor → (main_vendor, type, marker).
+        marker — пустая строка (Китай) или 'market' (Рынок) и т.п."""
         query = text("""
-        SELECT vendor_code, main_vendor_code, type_of_vendor_code 
+        SELECT vendor_code, main_vendor_code, type_of_vendor_code, COALESCE(marker, '')
         FROM ip_vendor_code
         WHERE "group" not in ('new', 'other_trash')
         """)
         result = self.session.execute(query).fetchall()
-        return {row[0]: (row[1], row[2]) for row in result}
+        return {row[0]: (row[1], row[2], row[3]) for row in result}
 
     @retry_on_exception()
     def get_ip_vendor_codes(self) -> list[tuple]:

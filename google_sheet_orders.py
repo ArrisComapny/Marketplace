@@ -45,6 +45,7 @@ COLOR_ABC_C = {"red": 0.96, "green": 0.80, "blue": 0.80}  # светло-кра�
 TAB_COLOR_NEW_SHEET = {"red": 0, "green": 1, "blue": 0.33}
 TAB_COLOR_COPY_SHEET = {"red": 1, "green": 1, "blue": 0}
 BORDER_STYLE = {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}}
+COLOR_SECTION_TOTALS = {"red": 0.80, "green": 0.90, "blue": 1.00}  # пастельно-синий — секции Рынок/Китай
 
 
 def column_to_letter(column: int):
@@ -606,6 +607,53 @@ def _nearest_supply(comment: str, qty_str: str, date_str: str, today: date):
     return (None, None)
 
 
+def _read_to_today_totals(spreadsheet: gspread.Spreadsheet) -> tuple[dict, dict, dict]:
+    """Читает лист 'ТО сегодня' и агрегирует per-vendor (ключ — vendor в lower):
+       FBO (C+F+I+L), FBS (O+Q), Приёмка (D+G+J+M+P).
+    Эти суммы — ровно то, что формулы fbo_formula/fbs_formula/priyomka_formula
+    пишут на лист; нужно, чтобы Python-ABC считался на тех же данных, что и
+    формулы в ячейках (иначе AB/AC/AD в сheet и Расшифровка могут разойтись)."""
+    try:
+        ws = spreadsheet.worksheet(TO_TODAY)
+    except gspread.exceptions.WorksheetNotFound:
+        logger.warning("Лист '%s' не найден — Python-метрики не будут выравнены "
+                       "с формулами FBO/FBS/Приёмки", TO_TODAY)
+        return {}, {}, {}
+
+    rows = ws.get('A1:Q', value_render_option='UNFORMATTED_VALUE')
+
+    def _num(row: list, idx: int) -> float:
+        if idx >= len(row):
+            return 0.0
+        v = row[idx]
+        if v in ('', None):
+            return 0.0
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return 0.0
+
+    fbo: dict[str, float] = {}
+    fbs: dict[str, float] = {}
+    priy: dict[str, float] = {}
+    for row in rows:
+        if not row or not row[0]:
+            continue
+        vendor = str(row[0]).strip().lower()
+        if not vendor:
+            continue
+        # FBO = C+F+I+L (индексы 2, 5, 8, 11)
+        fbo_add = _num(row, 2) + _num(row, 5) + _num(row, 8) + _num(row, 11)
+        # FBS = O+Q (индексы 14, 16)
+        fbs_add = _num(row, 14) + _num(row, 16)
+        # Приёмка = D+G+J+M+P (индексы 3, 6, 9, 12, 15)
+        priy_add = _num(row, 3) + _num(row, 6) + _num(row, 9) + _num(row, 12) + _num(row, 15)
+        fbo[vendor] = fbo.get(vendor, 0.0) + fbo_add
+        fbs[vendor] = fbs.get(vendor, 0.0) + fbs_add
+        priy[vendor] = priy.get(vendor, 0.0) + priy_add
+    return fbo, fbs, priy
+
+
 def clear_row_groups(spreadsheet: gspread.Spreadsheet, sheet_id: int) -> None:
     """Удаляет все группы строк/колонок и правила условного форматирования на листе."""
     creds = Credentials.from_service_account_file(PATH_JSON, scopes=SCOPE)
@@ -644,8 +692,24 @@ def clear_row_groups(spreadsheet: gspread.Spreadsheet, sheet_id: int) -> None:
 
 
 def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreadsheet,
-                      headers1: list, headers2: list, dub_ranges: list[tuple[int, int]]) -> None:
-    """Форматирование листа Неделька: мерджи шапки, заморозка, выравнивание, группировки."""
+                      headers1: list, headers2: list, dub_ranges: list[tuple[int, int]],
+                      totals_row_indices: list[int] | None = None,
+                      section_row_indices: list[int] | None = None,
+                      market_data_range: tuple[int, int] | None = None,
+                      china_data_range: tuple[int, int] | None = None) -> None:
+    """Форматирование листа Неделька: мерджи шапки, заморозка, выравнивание, группировки.
+
+    totals_row_indices — список 1-based строк с тоталами (все тоталы, вкл. grand+секции).
+        Заливка серым + bold.
+    section_row_indices — 1-based строки секционных подзаголовков (Рынок/Китай). Поверх
+        серой заливки — пастельно-синий COLOR_SECTION_TOTALS.
+    market_data_range / china_data_range — (first_row, last_row) 1-based диапазоны строк
+        данных секции. Используются для row-group (раскрывается/сворачивается, по умолчанию
+        развернуто)."""
+    if totals_row_indices is None:
+        totals_row_indices = [3]
+    if section_row_indices is None:
+        section_row_indices = []
     sheet_id = worksheet.id
     n_cols = len(headers2)
 
@@ -726,25 +790,44 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                                            "innerHorizontal": white_border,
                                            "innerVertical": white_border}})
 
-    # Закрепляем первые 3 строки (2 шапки + строка тоталов) и первые две колонки
+    # Закрепляем первые 3 строки (2 шапки + "ВСЕГО (мейны)") и 2 колонки.
+    # Строки "ВСЕГО (Рынок)" / "ВСЕГО (Китай)" — секционные подзаголовки внутри данных,
+    # не закрепляются (участвуют в обычной фильтрации).
     all_requests.append({"updateSheetProperties": {
         "properties": {"sheetId": sheet_id,
                        "gridProperties": {"frozenRowCount": 3, "frozenColumnCount": 2}},
         "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
     }})
 
-    # Строка тоталов (row 3, index 2): светлый серый фон + жирный текст.
-    all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
-                                                  "startRowIndex": 2,
-                                                  "endRowIndex": 3,
-                                                  "startColumnIndex": 0,
-                                                  "endColumnIndex": n_cols},
-                                        "cell": {"userEnteredFormat": {
-                                            "backgroundColor": COLOR_MAIN_ROW,
-                                            "textFormat": {"bold": True}}},
-                                        "fields": "userEnteredFormat(backgroundColor,textFormat.bold)"}})
+    # Для каждой тоталовой строки — серый фон + bold.
+    for r_num in totals_row_indices:
+        r0 = r_num - 1  # 1-based → 0-based
+        all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
+                                                      "startRowIndex": r0,
+                                                      "endRowIndex": r0 + 1,
+                                                      "startColumnIndex": 0,
+                                                      "endColumnIndex": n_cols},
+                                            "cell": {"userEnteredFormat": {
+                                                "backgroundColor": COLOR_MAIN_ROW,
+                                                "textFormat": {"bold": True}}},
+                                            "fields": "userEnteredFormat(backgroundColor,textFormat.bold)"}})
 
-    # Чёрная нижняя граница 2px под строкой тоталов, чтобы визуально отделить от данных.
+    # Секционные подзаголовки (Рынок/Китай) — поверх серого окрашиваем в
+    # пастельно-синий COLOR_SECTION_TOTALS, чтобы визуально отличить от grand totals.
+    for r_num in section_row_indices:
+        r0 = r_num - 1
+        all_requests.append({"repeatCell": {"range": {"sheetId": sheet_id,
+                                                      "startRowIndex": r0,
+                                                      "endRowIndex": r0 + 1,
+                                                      "startColumnIndex": 0,
+                                                      "endColumnIndex": n_cols},
+                                            "cell": {"userEnteredFormat": {
+                                                "backgroundColor": COLOR_SECTION_TOTALS}},
+                                            "fields": "userEnteredFormat.backgroundColor"}})
+
+    # Чёрная нижняя граница 2px под закреплённой строкой 3 — визуальный разделитель
+    # границы закрепа. У секционных подзаголовков своих границ не рисуем (блочные
+    # границы вокруг каждого мейна+дубли и так подчеркнут структуру).
     black_border_med = {"style": "SOLID_MEDIUM", "color": {"red": 0, "green": 0, "blue": 0}}
     all_requests.append({"updateBorders": {"range": {"sheetId": sheet_id,
                                                      "startRowIndex": 2,
@@ -752,6 +835,9 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                                                      "startColumnIndex": 0,
                                                      "endColumnIndex": n_cols},
                                            "bottom": black_border_med}})
+
+    # Границы секционных подзаголовков вешаем ПОЗЖЕ (в group_requests, после блочных
+    # 2px границ), иначе они перебьют нашу рамку. См. комментарий ниже.
 
     # Ширина колонок (34 столбца, добавлена "Стоимость стока" на позиции R):
     #   A=100 (Магазин), B=190 (Артикул),
@@ -794,11 +880,12 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                                         "fields": "userEnteredFormat.verticalAlignment"}})
 
     # Условное форматирование трёх колонок ABC (AB..AD, индексы 27..30):
-    # A=зелёный, B=жёлтый, C=красный. Со строки 4 — тоталы в 3-й строке пропускаем.
+    # A=зелёный, B=жёлтый, C=красный. С 3-й строки — у тоталовых и секционных строк
+    # ячейки ABC пустые, правило TEXT_EQ("A"/"B"/"C") не сработает → без заливки.
     for value, color in (('A', COLOR_ABC_A), ('B', COLOR_ABC_B), ('C', COLOR_ABC_C)):
         all_requests.append({"addConditionalFormatRule": {
             "rule": {"ranges": [{"sheetId": sheet_id,
-                                 "startRowIndex": 3,
+                                 "startRowIndex": 2,
                                  "startColumnIndex": 27,
                                  "endColumnIndex": 30}],
                      "booleanRule": {"condition": {"type": "TEXT_EQ",
@@ -953,7 +1040,38 @@ def format_week_sheet(worksheet: gspread.Worksheet, spreadsheet: gspread.Spreads
                           "endColumnIndex": col_idx + 1},
                 side: thin_black,
             }})
-        # Создаём row-groups для дублей.
+        # Row-groups для секций Рынок и Китай. Группа покрывает только строки ДАННЫХ
+        # (без секционного подзаголовка), чтобы при сворачивании подзаголовок оставался
+        # виден. По умолчанию группа развёрнута — hiddenByUser не ставим.
+        for section_range in (market_data_range, china_data_range):
+            if section_range is None:
+                continue
+            first_r, last_r = section_range
+            group_requests.append({"addDimensionGroup": {"range": {
+                "sheetId": sheet_id,
+                "dimension": "ROWS",
+                "startIndex": first_r - 1,
+                "endIndex": last_r,
+            }}})
+
+        # Полная 2px чёрная рамка вокруг каждого секционного подзаголовка. Делаем
+        # здесь (а не в основном batch), чтобы наши границы не были перекрыты 2px
+        # границами блоков дублей, которые идут выше по порядку запросов.
+        for r_num in section_row_indices:
+            r0 = r_num - 1
+            group_requests.append({"updateBorders": {
+                "range": {"sheetId": sheet_id,
+                          "startRowIndex": r0,
+                          "endRowIndex": r0 + 1,
+                          "startColumnIndex": 0,
+                          "endColumnIndex": n_cols},
+                "top": black_border,
+                "bottom": black_border,
+                "left": black_border,
+                "right": black_border,
+            }})
+
+        # Создаём row-groups для дублей (вложенные в секционные). Свёрнуты по умолчанию.
         for first_dub, last_dub in dub_ranges:
             r_rows = {"sheetId": sheet_id,
                       "dimension": "ROWS",
@@ -1000,13 +1118,21 @@ def update_week_sheet(db_conn: DbConnection):
     # они нормализованы в lower — сравниваем без учёта регистра.
     logger.info('[1/7] Загружаю vendors_map из БД...')
     vendors_map_raw = db_conn.get_vendors_map()
-    vendors_map: dict[str, tuple[str, str]] = {
-        k.lower(): ((v[0] or '').lower(), v[1]) for k, v in vendors_map_raw.items()
+    # vendors_map: vendor_lower → (main_lower, type, marker). marker='market' → Рынок,
+    # пусто → Китай.
+    vendors_map: dict[str, tuple[str, str, str]] = {
+        k.lower(): ((v[0] or '').lower(), v[1], (v[2] or '').strip().lower())
+        for k, v in vendors_map_raw.items()
     }
-    logger.info('vendors_map: %d артикулов (main=%d, maindouble=%d)',
+    _mains_market = sum(1 for _, (_mv, _t, _mk) in vendors_map.items()
+                        if _t == 'main' and _mk == 'market')
+    _mains_china = sum(1 for _, (_mv, _t, _mk) in vendors_map.items()
+                       if _t == 'main' and _mk != 'market')
+    logger.info('vendors_map: %d артикулов (main=%d: рынок=%d/китай=%d, maindouble=%d)',
                 len(vendors_map),
-                sum(1 for _, (_mv, _t) in vendors_map.items() if _t == 'main'),
-                sum(1 for _, (_mv, _t) in vendors_map.items() if _t == 'maindouble'))
+                sum(1 for _, (_mv, _t, _mk) in vendors_map.items() if _t == 'main'),
+                _mains_market, _mains_china,
+                sum(1 for _, (_mv, _t, _mk) in vendors_map.items() if _t == 'maindouble'))
 
     # Читаем колонки шаблона A..D одним запросом: A=Артикул, B=Комментарий, C=Кол-во, D=Дата прихода
     logger.info('[2/7] Читаю шаблон (A:D)...')
@@ -1041,34 +1167,51 @@ def update_week_sheet(db_conn: DbConnection):
     # сам main]. Нужен, чтобы для каждого артикула из шаблона подтянуть ПОЛНЫЙ блок
     # (все дубли того же main), даже если самих этих дублей в шаблоне нет.
     main_to_all: dict[str, list[str]] = {}
-    for v, (mv, _tp) in vendors_map.items():
+    for v, (mv, _tp, _mk) in vendors_map.items():
         main_to_all.setdefault(mv, []).append(v)
     # Внутри каждого блока сортируем дубли по алфавиту для стабильности (main
     # ставится отдельно первой строкой ниже).
     for mv in main_to_all:
         main_to_all[mv].sort()
 
+    # Маркер мейна (из записи самого main в справочнике). Если самого main в справочнике
+    # нет (аномалия) — берём маркер первого попавшегося дубля этой группы.
+    main_marker: dict[str, str] = {}
+    for v, (mv, _tp, _mk) in vendors_map.items():
+        if _tp == 'main':
+            main_marker[v] = _mk
+    for mv, members in main_to_all.items():
+        if mv not in main_marker:
+            for m in members:
+                _mk = vendors_map.get(m, ('', '', ''))[2]
+                if _mk:
+                    main_marker[mv] = _mk
+                    break
+            main_marker.setdefault(mv, '')
+
     # Группируем: для каждого артикула из шаблона определяем его main и берём ВЕСЬ
     # связанный блок из main_to_all. Один main → один блок (повторные упоминания
     # дублей того же main в шаблоне не плодят повторные блоки).
     blocks: dict[str, list[str]] = {}
     for vendor in template_vendors:
-        main_vendor, _type = vendors_map[vendor]
+        main_vendor, _type, _marker = vendors_map[vendor]
         if main_vendor in blocks:
             continue
         group = main_to_all.get(main_vendor, [vendor])
         # Main — всегда первым; остальные — после.
         blocks[main_vendor] = [main_vendor] + [v for v in group if v != main_vendor]
     _total_in_blocks = sum(len(v) for v in blocks.values())
-    logger.info('[3/7] Сформировано %d блоков (мейнов), всего артикулов в них: %d',
-                len(blocks), _total_in_blocks)
+    _blocks_market = sum(1 for mv in blocks if main_marker.get(mv) == 'market')
+    _blocks_china = len(blocks) - _blocks_market
+    logger.info('[3/7] Сформировано %d блоков (рынок=%d, китай=%d), всего артикулов: %d',
+                len(blocks), _blocks_market, _blocks_china, _total_in_blocks)
 
     # Полная группа артикулов по каждому мейну (из vendors_map), включая варианты,
     # которых нет в шаблоне. FBS — общий пул на группу: в БД он может лежать под
     # артикулом мейна или любого варианта. Если мейна нет в шаблоне, в related его
     # тоже нет, и FBS под мейном терялся — поэтому FBS суммируем по всей группе.
     main_to_members: dict[str, set[str]] = {}
-    for _v, (_mv, _tv) in vendors_map.items():
+    for _v, (_mv, _tv, _mk2) in vendors_map.items():
         if _tv == 'main':
             main_to_members.setdefault(_v, set()).add(_v)
         elif _tv == 'maindouble':
@@ -1189,99 +1332,7 @@ def update_week_sheet(db_conn: DbConnection):
             result[key] = 'A' if ratio <= 0.80 else ('B' if ratio <= 0.95 else 'C')
         return result
 
-    # Считаем метрики блока (главный + дубли): revenue, profit, cost, current_stock, week_orders.
-    # Суммируем по всем магазинам, на которых живёт каждый артикул из блока.
-    block_revenue: dict[str, float] = {}
-    block_profit: dict[str, float] = {}
-    block_cost: dict[str, float] = {}
-    block_stock_now: dict[str, int] = {}
-    block_week_orders: dict[str, int] = {}
-    for main_vendor, related in blocks.items():
-        rev = prof = cost = 0.0
-        stock = orders = 0
-        # FBS-пул — общий на всю группу (мейн может отсутствовать в шаблоне).
-        for v in fbs_members(main_vendor, related):
-            stock += stock_map.get(('FBS', v), 0)
-        for v in related:
-            for cid in vendor_clients.get(v, ()):
-                s = profit_map.get((cid, v.lower()))
-                if s:
-                    rev += s['sale']
-                    prof += s['profit']
-                    cost += s['cost']
-                stock += stock_map.get((cid, v), 0)
-                orders += week_map.get((cid, v), 0)
-        block_revenue[main_vendor] = rev
-        block_profit[main_vendor] = prof
-        block_cost[main_vendor] = cost
-        block_stock_now[main_vendor] = stock
-        block_week_orders[main_vendor] = orders
-
-    block_rev_classes = _classify_pareto([(mv, block_revenue[mv]) for mv in blocks])
-
-    # ROI блока = profit / cost. Парето 80/15/5 — как у выручки.
-    block_roi = {mv: (block_profit[mv] / block_cost[mv] if block_cost[mv] > 0 else 0)
-                 for mv in blocks}
-    block_roi_classes = _classify_pareto([(mv, block_roi[mv]) for mv in blocks])
-
-    # Метрики и ABC-классы дублей (для отдельной Парето-классификации по (vendor, client)).
-    dub_rev: dict[tuple[str, str], float] = {}
-    dub_profit: dict[tuple[str, str], float] = {}
-    dub_cost: dict[tuple[str, str], float] = {}
-    dub_stock_now: dict[tuple[str, str], int] = {}
-    dub_week_orders: dict[tuple[str, str], int] = {}
-    for main_vendor, related in blocks.items():
-        for v in related:
-            for cid in vendor_clients.get(v, ()):
-                key = (v, cid)
-                s = profit_map.get((cid, v)) or {}
-                dub_rev[key] = s.get('sale', 0.0)
-                dub_profit[key] = s.get('profit', 0.0)
-                dub_cost[key] = s.get('cost', 0.0)
-                dub_stock_now[key] = stock_map.get((cid, v), 0)  # FBO у магазина (без FBS)
-                dub_week_orders[key] = week_map.get((cid, v), 0)
-
-    dub_rev_classes = _classify_pareto([(k, dub_rev[k]) for k in dub_rev])
-    dub_roi = {k: (dub_profit[k] / dub_cost[k] if dub_cost[k] > 0 else 0) for k in dub_rev}
-    dub_roi_classes = _classify_pareto([(k, dub_roi[k]) for k in dub_rev])
-
-    def _dub_turnover_class(key: tuple[str, str]) -> str:
-        orders = dub_week_orders.get(key, 0)
-        if orders <= 0:
-            return 'C'
-        stock = dub_stock_now.get(key, 0)
-        days = round(stock * 7 / orders)
-        return 'C' if days > 45 else ('B' if days > 30 else 'A')
-
-    # Расшифровка ABC: тройка букв + краткое объяснение каждой части.
-    DESC_REV = {'A': 'ТОП 80% выручки', 'B': 'доп. 15% выручки', 'C': 'хвост 5% выручки'}
-    DESC_ROI = {'A': 'ТОП 80% ROI', 'B': 'доп. 15% ROI', 'C': 'хвост 5% ROI'}
-    DESC_TURN = {'A': '< 30 дней оборачиваемости',
-                 'B': '30–45 дней оборачиваемости',
-                 'C': '> 45 дней или нет продаж'}
-
-    def abc_description(a: str, b: str, c: str) -> str:
-        if not (a and b and c):
-            return ''
-        return f"{a}{b}{c}: {DESC_REV.get(a, '?')}, {DESC_ROI.get(b, '?')}, {DESC_TURN.get(c, '?')}"
-
-    def _block_turnover_class(mv: str) -> str:
-        orders = block_week_orders.get(mv, 0)
-        if orders <= 0:
-            return 'C'  # нет заказов — оборачиваемость не считается, кладём в C
-        stock = block_stock_now.get(mv, 0)
-        days = round(stock * 7 / orders)
-        return 'C' if days > 45 else ('B' if days > 30 else 'A')
-
-    abc_order = {'A': 0, 'B': 1, 'C': 2}
-    blocks = dict(sorted(
-        blocks.items(),
-        key=lambda kv: (abc_order.get(block_rev_classes.get(kv[0], ''), 3),
-                        abc_order.get(block_roi_classes.get(kv[0], ''), 3),
-                        abc_order.get(_block_turnover_class(kv[0]), 3),
-                        -block_revenue.get(kv[0], 0.0)),
-    ))
-
+    # Хелперы для сборки дублей — нужны и для пре-паса (ниже), и для главного цикла.
     def components_for_vendor(vendor: str, client_id: str) -> dict | None:
         return profit_map.get((client_id, vendor.lower()))
 
@@ -1290,6 +1341,115 @@ def update_week_sheet(db_conn: DbConnection):
         if not client_id:
             return 0
         return stock_start_map.get((client_id, vendor), 0)
+
+    def _compute_dub_rows_data(related: list[str]) -> list[dict]:
+        """Собираем список дублей (vendor, client_id) с данными. Отфильтровываем пустые."""
+        out: list[dict] = []
+        for vendor in related:
+            comment_v, qty_v, days_v = supply_for(vendor)
+            cids = sorted(vendor_clients.get(vendor, set())) or ['']
+            for client_id in cids:
+                client = clients.get(client_id) if client_id else None
+                mp = client.marketplace if client else ''
+                shop = client.name_company.split()[0] if client and client.name_company else ''
+                fbo_qty = stock_map.get((client_id, vendor), 0) if client_id else 0
+                yest_qty = yesterday_map.get((client_id, vendor), 0) if client_id else 0
+                week_qty = week_map.get((client_id, vendor), 0) if client_id else 0
+                is_empty = (fbo_qty == 0 and yest_qty == 0 and week_qty == 0
+                            and not qty_v and not (comment_v or '').strip())
+                if is_empty:
+                    continue
+                out.append({
+                    'vendor': vendor, 'client_id': client_id, 'mp': mp, 'shop': shop,
+                    'fbo_qty': fbo_qty, 'yest_qty': yest_qty, 'week_qty': week_qty,
+                    'days_v': days_v, 'qty_v': qty_v, 'comment_v': comment_v,
+                    'comps': components_for_vendor(vendor, client_id),
+                    'stock_start': stock_start_for_dub(vendor, client_id),
+                })
+        return out
+
+    # Пре-пас: собираем dub_rows_data для каждого блока. Пустые — выбрасываем.
+    prebuilt: list[tuple[str, list[str], list[dict]]] = []
+    for main_vendor, related in blocks.items():
+        dubs = _compute_dub_rows_data(related)
+        if dubs:
+            prebuilt.append((main_vendor, related, dubs))
+
+    # Читаем 'ТО сегодня' один раз — это тот же источник, что идёт в формулы FBO/FBS/
+    # Приёмка на листе. Без этого Python-метрики (block_stock_now) считались бы по БД
+    # и расходились с F = Итого в формулах → ABC-оборачиваемость могла бы отличаться.
+    logger.info("    читаю лист '%s' для синхронизации Python-ABC с формулами...", TO_TODAY)
+    to_today_fbo, to_today_fbs, to_today_priy = _read_to_today_totals(spreadsheet)
+
+    # Метрики блока вычисляем из prebuilt (тот же фильтр is_empty, что видит лист,
+    # т.е. считаем только по дублям, которые реально попадут в sheet) и из 'ТО сегодня'
+    # (тот же источник стока, что в F=Итого).
+    block_revenue: dict[str, float] = {}
+    block_profit: dict[str, float] = {}
+    block_cost: dict[str, float] = {}
+    block_stock_now: dict[str, int] = {}
+    block_week_orders: dict[str, int] = {}
+    for main_vendor, _related, dubs in prebuilt:
+        rev = prof = cost = 0.0
+        orders = 0
+        for d in dubs:
+            c = d['comps']
+            if c:
+                rev += c['sale']
+                prof += c['profit']
+                cost += c['cost']
+            orders += d['week_qty']
+        block_revenue[main_vendor] = rev
+        block_profit[main_vendor] = prof
+        block_cost[main_vendor] = cost
+        block_week_orders[main_vendor] = orders
+        # Итого = FBO + FBS + Приёмка (ровно то, что считается в F на листе).
+        block_stock_now[main_vendor] = int(to_today_fbo.get(main_vendor, 0)
+                                           + to_today_fbs.get(main_vendor, 0)
+                                           + to_today_priy.get(main_vendor, 0))
+
+    # Классификация только по тем блокам, что реально показываются (есть в prebuilt).
+    prebuilt_mains = [t[0] for t in prebuilt]
+    block_rev_classes = _classify_pareto([(mv, block_revenue[mv]) for mv in prebuilt_mains])
+
+    # ROI блока = profit / cost. Парето 80/15/5 — как у выручки.
+    block_roi = {mv: (block_profit[mv] / block_cost[mv] if block_cost[mv] > 0 else 0)
+                 for mv in prebuilt_mains}
+    block_roi_classes = _classify_pareto([(mv, block_roi[mv]) for mv in prebuilt_mains])
+
+    def _block_turnover_class(mv: str) -> str:
+        """Класс оборачиваемости блока для Python-сортировки. Пороги зависят от маркера
+        мейна: Рынок — 10/15 (строго), Китай — 30/45 (мягко)."""
+        orders = block_week_orders.get(mv, 0)
+        if orders <= 0:
+            return 'C'  # нет заказов — оборачиваемость не считается, кладём в C
+        stock = block_stock_now.get(mv, 0)
+        days = round(stock * 7 / orders)
+        is_market = main_marker.get(mv) == 'market'
+        hi_c, hi_b = (15, 10) if is_market else (45, 30)
+        return 'C' if days > hi_c else ('B' if days > hi_b else 'A')
+
+    abc_order = {'A': 0, 'B': 1, 'C': 2}
+
+    def _abc_sort_key(mv: str):
+        return (abc_order.get(block_rev_classes.get(mv, ''), 3),
+                abc_order.get(block_roi_classes.get(mv, ''), 3),
+                abc_order.get(_block_turnover_class(mv), 3),
+                -block_revenue.get(mv, 0.0))
+
+    # Разделяем prebuilt на Рынок и Китай по маркеру мейна. Сортируем каждую группу
+    # отдельно по ABC. На листе Рынок пойдёт перед Китаем.
+    prebuilt_by_mv = {t[0]: t for t in prebuilt}
+    market_mains = sorted(
+        [mv for mv in prebuilt_mains if main_marker.get(mv) == 'market'],
+        key=_abc_sort_key,
+    )
+    china_mains = sorted(
+        [mv for mv in prebuilt_mains if main_marker.get(mv) != 'market'],
+        key=_abc_sort_key,
+    )
+    market_data = [prebuilt_by_mv[mv] for mv in market_mains]
+    china_data = [prebuilt_by_mv[mv] for mv in china_mains]
 
     # Диапазон для SUMPRODUCT в ABC-формулах: рассчитаем как 2 шапки + достаточный запас.
     # Точный нижний индекс мы узнаем только после сборки data, поэтому фиксируем верхнюю
@@ -1347,12 +1507,14 @@ def update_week_sheet(db_conn: DbConnection):
     def abc_revenue_formula(row_idx: int) -> str:
         """ABC по выручке (Парето 80/15/5). Главные и дубли — отдельно (A пуст у главных,
         там нет Магазина; у дублей в A стоит "WB Voyor" и т.п.). Выручка в колонке P.
-        Диапазон начинается с 4-й строки: 1-2 — шапка, 3 — тоталы."""
+        Диапазон начинается с 5-й строки. Секционные строки "ВСЕГО (…)" (B начинается
+        с 'ВСЕГО') исключаются из классификации, т.к. у них тоже A пусто."""
         r = row_idx
         e = ABC_RANGE_END
-        kind = f'(($A$4:$A${e}="")=(A{r}=""))'
-        cum = f'СУММПРОИЗВ({kind}*($P$4:$P${e}>=P{r})*$P$4:$P${e})'
-        total = f'СУММПРОИЗВ({kind}*$P$4:$P${e})'
+        kind = (f'(($A$5:$A${e}="")=(A{r}=""))'
+                f'*(ЛЕВСИМВ($B$5:$B${e};5)<>"ВСЕГО")')
+        cum = f'СУММПРОИЗВ({kind}*($P$5:$P${e}>=P{r})*$P$5:$P${e})'
+        total = f'СУММПРОИЗВ({kind}*$P$5:$P${e})'
         return (f'=ЕСЛИОШИБКА('
                 f'ЕСЛИ({cum}/{total}<=0,8;"A";'
                 f'ЕСЛИ({cum}/{total}<=0,95;"B";"C"))'
@@ -1360,25 +1522,57 @@ def update_week_sheet(db_conn: DbConnection):
 
     def abc_roi_formula(row_idx: int) -> str:
         """ABC по ROI (Парето 80/15/5). Главные и дубли — отдельно (A пуст у главных).
-        ROI в колонке L. Если L пустой/не число — C.
-        Диапазон начинается с 4-й строки: 1-2 — шапка, 3 — тоталы."""
+        ROI в колонке L. Если L пустой/не число — C. Секционные строки "ВСЕГО (…)"
+        исключаются по колонке B."""
         r = row_idx
         e = ABC_RANGE_END
-        kind = f'(($A$4:$A${e}="")=(A{r}=""))'
-        cum = f'СУММПРОИЗВ({kind}*($L$4:$L${e}>=L{r})*$L$4:$L${e})'
-        total = f'СУММПРОИЗВ({kind}*$L$4:$L${e})'
+        kind = (f'(($A$5:$A${e}="")=(A{r}=""))'
+                f'*(ЛЕВСИМВ($B$5:$B${e};5)<>"ВСЕГО")')
+        cum = f'СУММПРОИЗВ({kind}*($L$5:$L${e}>=L{r})*$L$5:$L${e})'
+        total = f'СУММПРОИЗВ({kind}*$L$5:$L${e})'
         return (f'=ЕСЛИ(НЕ(ЕЧИСЛО(L{r}));"C";'
                 f'ЕСЛИОШИБКА('
                 f'ЕСЛИ({cum}/{total}<=0,8;"A";'
                 f'ЕСЛИ({cum}/{total}<=0,95;"B";"C"))'
                 f';"C"))')
 
-    def abc_turnover_formula(row_idx: int) -> str:
-        """ABC по оборачиваемости: >45 C, >30 B, иначе A. Колонка J (Оборач. Неделя).
-        Если в J нет числа (нет заказов → ""), класс = C."""
+    # Пороги оборачиваемости для ABC-классификации.
+    # Китай: длинный цикл поставок → мягкие пороги 30/45 дней.
+    # Рынок: быстрый оборот → строгие пороги 10/15 дней.
+    TURNOVER_THRESHOLDS = {
+        True:  (15, 10),  # is_market → (hi_C, hi_B)
+        False: (45, 30),  # china
+    }
+    TURNOVER_DESC = {
+        True: ('< 10 дней оборачиваемости',
+               '10–15 дней оборачиваемости',
+               '> 15 дней или нет продаж'),
+        False: ('< 30 дней оборачиваемости',
+                '30–45 дней оборачиваемости',
+                '> 45 дней или нет продаж'),
+    }
+
+    def abc_turnover_formula(row_idx: int, is_market: bool = False) -> str:
+        """ABC по оборачиваемости (колонка J). Для Рынка строже (10/15), для Китая мягче
+        (30/45). Если в J не число (нет заказов → ""), класс = C."""
         r = row_idx
+        hi_c, hi_b = TURNOVER_THRESHOLDS[is_market]
         return (f'=ЕСЛИ(НЕ(ЕЧИСЛО(J{r}));"C";'
-                f'ЕСЛИ(J{r}>45;"C";ЕСЛИ(J{r}>30;"B";"A")))')
+                f'ЕСЛИ(J{r}>{hi_c};"C";ЕСЛИ(J{r}>{hi_b};"B";"A")))')
+
+    def abc_description_formula(row_idx: int, is_market: bool = False) -> str:
+        """Формульная Расшифровка. Склеивает значения AB/AC/AD + текстовые описания.
+        Если хоть одна из ABC-ячеек пустая — пустая строка.
+        Текст описания оборачиваемости зависит от Рынок/Китай (разные пороги)."""
+        r = row_idx
+        turn_a, turn_b, turn_c = TURNOVER_DESC[is_market]
+        rev = (f'SWITCH(AB{r};"A";"ТОП 80% выручки";"B";"доп. 15% выручки";'
+               f'"C";"хвост 5% выручки";"")')
+        roi = (f'SWITCH(AC{r};"A";"ТОП 80% ROI";"B";"доп. 15% ROI";'
+               f'"C";"хвост 5% ROI";"")')
+        turn = (f'SWITCH(AD{r};"A";"{turn_a}";"B";"{turn_b}";"C";"{turn_c}";"")')
+        return (f'=ЕСЛИ(ИЛИ(AB{r}="";AC{r}="";AD{r}="");"";'
+                f'AB{r}&AC{r}&AD{r}&": "&{rev}&", "&{roi}&", "&{turn})')
 
     def gmroi_week_formula(row_idx: int) -> str:
         """Недельный GMROI = profit / Стоимость стока (R).
@@ -1398,42 +1592,7 @@ def update_week_sheet(db_conn: DbConnection):
     def gmroi_year_formula(row_idx: int) -> str:
         return f'=ЕСЛИ(N{row_idx}="";"";N{row_idx}*52)'
 
-    # Собираем строки таблицы.
-    # Строка 3 (индекс 2) — тоталы по всем мейн-артикулам: суммы столбцов, где A пусто
-    # (только мейны), и производные метрики (Оборач., Маржа, ROI, GMROI) считаются
-    # из этих сумм. Данные (мейны + дубли) начинаются с 4-й строки.
-    def totals_sum(letter: str) -> str:
-        return f'=СУММЕСЛИ($A$4:$A;"";{letter}$4:{letter})'
-
-    totals_row: list = ['', 'ВСЕГО (мейны)']
-    # C..H — Стоки + Заказы (сумма мейнов).
-    totals_row.extend(totals_sum(c) for c in ('C', 'D', 'E', 'F', 'G', 'H'))
-    # I, J — Оборач. Вчера / Неделя из тоталов Итого и заказов.
-    totals_row.append('=ЕСЛИ(G3=0;"";ОКРУГЛ(F3/G3;0))')
-    totals_row.append('=ЕСЛИ(H3=0;"";ОКРУГЛ(F3*7/H3;0))')
-    # K..O — Маржа, ROI, GMROI год/неделя/месяц. GMROI на портфеле теперь честный:
-    # знаменатель R3 = сумма Стоимости стока по мейнам, а не пересчёт через
-    # средневзвешенный себес * общие юниты.
-    totals_row.append(margin_formula(3))       # K
-    totals_row.append(roi_formula(3))          # L
-    totals_row.append(gmroi_year_formula(3))   # M
-    totals_row.append(gmroi_week_formula(3))   # N
-    totals_row.append(gmroi_month_formula(3))  # O
-    # P, Q — Выручка, Себес (сумма).
-    totals_row.extend(totals_sum(c) for c in ('P', 'Q'))
-    # R — Стоимость стока: сумма по мейнам (правильная стоимость портфеля).
-    totals_row.append(totals_sum('R'))
-    # S..Y — 7 остальных компонентов прибыли.
-    totals_row.extend(totals_sum(c) for c in ('S', 'T', 'U', 'V', 'W', 'X', 'Y'))
-    # Z, AA — Сток на начало и Кол-во продаж (сумма мейнов).
-    totals_row.extend(totals_sum(c) for c in ('Z', 'AA'))
-    # AB..AH — ABC-классы и Ближайшая поставка не агрегируются, оставляем пустыми.
-    totals_row.extend([''] * (34 - len(totals_row)))
-
-    data: list[list] = [headers1, headers2, totals_row]
-    dub_ranges: list[tuple[int, int]] = []
-    logger.info('[7/7] Собираю строки Недельки (блоки: %d)...', len(blocks))
-
+    # Хелперы для сборки ячеек строк (используются ниже в главном цикле).
     def components_cells(comps: dict | None) -> list:
         """9 столбцов P..X: Выручка, Себес, Комиссия, Эквайринг, Логистика, Хранение,
         Реклама, Прочее, Налог."""
@@ -1447,36 +1606,88 @@ def update_week_sheet(db_conn: DbConnection):
         """Колонка Z — Кол-во продаж за неделю."""
         return '' if not comps else comps['quantities']
 
-    for main_vendor, related in blocks.items():
-        # Один артикул может жить на нескольких магазинах: формируем по строке-дублю
-        # на КАЖДУЮ пару (vendor, client_id). Если магазинов не нашлось — одна строка
-        # с пустым магазином (комментарий из шаблона может оправдать показ).
-        dub_rows_data = []
-        for vendor in related:
-            comment_v, qty_v, days_v = supply_for(vendor)
-            cids = sorted(vendor_clients.get(vendor, set())) or ['']
-            for client_id in cids:
-                client = clients.get(client_id) if client_id else None
-                mp = client.marketplace if client else ''
-                shop = client.name_company.split()[0] if client and client.name_company else ''
-                fbo_qty = stock_map.get((client_id, vendor), 0) if client_id else 0
-                yest_qty = yesterday_map.get((client_id, vendor), 0) if client_id else 0
-                week_qty = week_map.get((client_id, vendor), 0) if client_id else 0
-                is_empty = (fbo_qty == 0 and yest_qty == 0 and week_qty == 0
-                            and not qty_v and not (comment_v or '').strip())
-                if is_empty:
-                    continue
-                dub_rows_data.append({
-                    'vendor': vendor, 'client_id': client_id, 'mp': mp, 'shop': shop,
-                    'fbo_qty': fbo_qty, 'yest_qty': yest_qty, 'week_qty': week_qty,
-                    'days_v': days_v, 'qty_v': qty_v, 'comment_v': comment_v,
-                    'comps': components_for_vendor(vendor, client_id),
-                    'stock_start': stock_start_for_dub(vendor, client_id),
-                })
+    # Макет листа:
+    #   row 1-2 — шапка (закреп)
+    #   row 3   — "ВСЕГО (мейны)"  (закреп) — сумма = row 4 + row {china_section_row}
+    #   row 4   — "ВСЕГО (Рынок)"  (секционный подзаголовок, НЕ закреплён)
+    #   row 5..M — Рынок (мейны + дубли)
+    #   row M+1 — "ВСЕГО (Китай)" (секционный подзаголовок)
+    #   row M+2..N — Китай (мейны + дубли)
+    market_rows_total = sum(1 + len(dubs) for _, _, dubs in market_data)
+    china_rows_total = sum(1 + len(dubs) for _, _, dubs in china_data)
+    market_section_row = 4            # сразу под закреплённой строкой 3 (ВСЕГО мейны)
+    market_data_start = 5
+    market_data_end = market_section_row + market_rows_total  # =4 если нет данных
+    china_section_row = market_data_end + 1
+    china_data_start = china_section_row + 1
+    china_data_end = china_section_row + china_rows_total     # =china_section_row если пусто
 
-        if not dub_rows_data:
-            continue  # все дубли пустые — пропускаем весь блок
+    def _row_formulas(self_row: int, tsum) -> list:
+        """Общая часть любой строки тоталов: Оборач./Маржа/ROI/GMROI/суммы по колонкам.
+        tsum(letter) — функция, возвращающая формулу суммы для столбца."""
+        r = self_row
+        row: list = []
+        row.extend(tsum(c) for c in ('C', 'D', 'E', 'F', 'G', 'H'))
+        row.append(f'=ЕСЛИ(G{r}=0;"";ОКРУГЛ(F{r}/G{r};0))')
+        row.append(f'=ЕСЛИ(H{r}=0;"";ОКРУГЛ(F{r}*7/H{r};0))')
+        row.append(margin_formula(r))
+        row.append(roi_formula(r))
+        row.append(gmroi_year_formula(r))
+        row.append(gmroi_week_formula(r))
+        row.append(gmroi_month_formula(r))
+        row.extend(tsum(c) for c in ('P', 'Q'))
+        row.append(tsum('R'))
+        row.extend(tsum(c) for c in ('S', 'T', 'U', 'V', 'W', 'X', 'Y'))
+        row.extend(tsum(c) for c in ('Z', 'AA'))
+        return row
 
+    def _build_grand_totals(label: str, self_row: int, msec: int, csec: int) -> list:
+        """Row 3 "ВСЕГО (мейны)": просто сумма двух секционных строк (Рынок + Китай)."""
+        row: list = ['', label] + _row_formulas(self_row, lambda c: f'={c}{msec}+{c}{csec}')
+        row.extend([''] * (34 - len(row)))
+        return row
+
+    def _build_section_totals(label: str, self_row: int, start: int, end: int) -> list:
+        """Секционный подзаголовок (Рынок/Китай): SUMIF по ограниченному диапазону
+        мейнов (A пусто). Если start > end — секция пуста, суммы остаются пустыми.
+        A пусто; ABC-формулы отличают эту строку от мейна по колонке B
+        (B начинается с "ВСЕГО...")."""
+        is_empty = end < start
+
+        def tsum(letter: str):
+            if is_empty:
+                return ''
+            return f'=СУММЕСЛИ($A${start}:$A${end};"";{letter}${start}:{letter}${end})'
+
+        row: list = ['', label] + _row_formulas(self_row, tsum)
+        row.extend([''] * (34 - len(row)))
+        return row
+
+    totals_all = _build_grand_totals('ВСЕГО (мейны)', 3, market_section_row, china_section_row)
+    totals_market = _build_section_totals('ВСЕГО (Рынок)', market_section_row,
+                                          market_data_start, market_data_end)
+    totals_china = _build_section_totals('ВСЕГО (Китай)', china_section_row,
+                                         china_data_start, china_data_end)
+
+    # Собираем data по макету: [шапка, grand, section_market, …market blocks…,
+    # section_china, …china blocks…]
+    data: list[list] = [headers1, headers2, totals_all, totals_market]
+    dub_ranges: list[tuple[int, int]] = []
+    # Какие строки — тоталы (grand + 2 секционных). Нужно для форматирования.
+    totals_row_indices: list[int] = [3, market_section_row, china_section_row]
+    logger.info('[7/7] Собираю строки Недельки: блоков рынок=%d (строк 5..%d), '
+                'китай=%d (строк %d..%d)',
+                len(market_data), market_data_end,
+                len(china_data), china_data_start, china_data_end)
+
+    _china_section_inserted = False
+    for main_vendor, related, dub_rows_data in (market_data + china_data):
+        # Между Рынком и Китаем вставляем секционный подзаголовок "ВСЕГО (Китай)".
+        if not _china_section_inserted and (len(data) + 1) == china_section_row:
+            data.append(totals_china)
+            _china_section_inserted = True
+        # Маркер мейна — для выбора порогов ABC-оборачиваемости и текста расшифровки.
+        is_market = main_marker.get(main_vendor) == 'market'
         agg_row = len(data) + 1
         first_dub = agg_row + 1
         last_dub = agg_row + len(dub_rows_data)
@@ -1520,10 +1731,8 @@ def update_week_sheet(db_conn: DbConnection):
             col_sum("AA"),                             # AA = Кол-во продаж
             abc_revenue_formula(agg_row),              # AB = ABC выручка
             abc_roi_formula(agg_row),                  # AC = ABC ROI
-            abc_turnover_formula(agg_row),             # AD = ABC оборач.
-            abc_description(block_rev_classes.get(main_vendor, ''),
-                            block_roi_classes.get(main_vendor, ''),
-                            _block_turnover_class(main_vendor)),  # AE = Расшифровка
+            abc_turnover_formula(agg_row, is_market),  # AD = ABC оборач.
+            abc_description_formula(agg_row, is_market),  # AE = Расшифровка
             days_main, qty_main,                       # AF, AG = Ближайшая поставка
             comment_main,                              # AH = Комментарий
         ])
@@ -1554,13 +1763,16 @@ def update_week_sheet(db_conn: DbConnection):
                 quantities_cell(d['comps']),               # AA = Кол-во продаж
                 abc_revenue_formula(row_idx),              # AB
                 abc_roi_formula(row_idx),                  # AC
-                abc_turnover_formula(row_idx),             # AD
-                abc_description(dub_rev_classes.get((d['vendor'], d['client_id']), ''),
-                                dub_roi_classes.get((d['vendor'], d['client_id']), ''),
-                                _dub_turnover_class((d['vendor'], d['client_id']))),  # AE
+                abc_turnover_formula(row_idx, is_market),  # AD — пороги такие же как у мейна
+                abc_description_formula(row_idx, is_market),  # AE
                 '', '',  # AF, AG — Ближайшая поставка только на агрегатной строке
                 '',       # AH — Комментарий только на агрегатной строке
             ])
+
+    # Если Китая не было (цикл не триггернул вставку) — всё равно показываем заголовок
+    # "ВСЕГО (Китай)" с пустыми суммами, для единообразия макета.
+    if not _china_section_inserted:
+        data.append(totals_china)
 
     # КРИТИЧНО: снимаем мерджи в шапке ПЕРЕД worksheet.update() — иначе значения,
     # попадающие в ячейки уже существующего merge с прошлого прогона, уходят только
@@ -1581,11 +1793,17 @@ def update_week_sheet(db_conn: DbConnection):
     worksheet_week.update(range_name='A1', values=data, value_input_option=ValueInputOption("USER_ENTERED"))
 
     logger.info('Применяю форматирование...')
+    market_data_range = (market_data_start, market_data_end) if market_rows_total else None
+    china_data_range = (china_data_start, china_data_end) if china_rows_total else None
     format_week_sheet(worksheet=worksheet_week,
                       spreadsheet=spreadsheet,
                       headers1=headers1,
                       headers2=headers2,
-                      dub_ranges=dub_ranges)
+                      dub_ranges=dub_ranges,
+                      totals_row_indices=totals_row_indices,
+                      section_row_indices=[market_section_row, china_section_row],
+                      market_data_range=market_data_range,
+                      china_data_range=china_data_range)
     logger.info('=== update_week_sheet: готово ===')
 
 
