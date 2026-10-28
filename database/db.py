@@ -401,9 +401,7 @@ class DbConnection:
         # --- services_final per МП — раскладываем по категориям через CASE-WHEN ---
         serv_tables = {
             'WB': ('wb_services_final', 'SUM({c})'),
-            # OZ: удержания хранятся отрицательными, возвраты положительными. Чистый
-            # расход = -SUM(cost). ABS был бы неверен — считал бы возвраты как расход.
-            'OZON': ('oz_services_final', '-SUM({c})'),
+            'OZON': ('oz_services_final', 'SUM(ABS({c}))'),  # удержания отрицательные → ABS
             'YANDEX': ('ya_services_final', 'SUM({c})'),
         }
         for mp, (table, agg_tmpl) in serv_tables.items():
