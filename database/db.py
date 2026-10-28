@@ -367,10 +367,12 @@ class DbConnection:
             s['tac'] += float(tac or 0)
             s['quantities'] += float(qty or 0)
 
-        # OZ: commission хранится отрицательно → ABS.
+        # OZ: удержание комиссии хранится отрицательно, возврат (например, при возврате
+        # товара клиентом) — положительно. Чистый расход = -SUM(commission). ABS был бы
+        # неверен: засчитывал бы возвраты как дополнительный расход.
         for cid, vc, sale, cost, comm, tac, qty in self.session.execute(text("""
             SELECT client_id, lower(vendor_code),
-                   SUM(sale), SUM(cost), SUM(ABS(commission)), SUM("TaC"), SUM(quantities)
+                   SUM(sale), SUM(cost), -SUM(commission), SUM("TaC"), SUM(quantities)
             FROM oz_main_table_view
             WHERE accrual_date BETWEEN :f AND :t
             GROUP BY client_id, lower(vendor_code)
@@ -399,7 +401,9 @@ class DbConnection:
         # --- services_final per МП — раскладываем по категориям через CASE-WHEN ---
         serv_tables = {
             'WB': ('wb_services_final', 'SUM({c})'),
-            'OZON': ('oz_services_final', 'SUM(ABS({c}))'),  # удержания отрицательные → ABS
+            # OZ: удержания хранятся отрицательными, возвраты положительными. Чистый
+            # расход = -SUM(cost). ABS был бы неверен — считал бы возвраты как расход.
+            'OZON': ('oz_services_final', '-SUM({c})'),
             'YANDEX': ('ya_services_final', 'SUM({c})'),
         }
         for mp, (table, agg_tmpl) in serv_tables.items():
