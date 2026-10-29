@@ -1167,10 +1167,11 @@ def update_week_sheet(db_conn: DbConnection):
                 _mains_market, _mains_china,
                 sum(1 for _, (_mv, _t, _mk) in vendors_map.items() if _t == 'maindouble'))
 
-    # Читаем колонки шаблона A..D одним запросом: A=Артикул, B=Комментарий, C=Кол-во, D=Дата прихода
-    logger.info('[2/7] Читаю шаблон (A:D)...')
-    template_rows = worksheet_sample.get('A:D')
-    template_info: dict[str, tuple[str, str, str]] = {}
+    # Читаем колонки шаблона A..E одним запросом: A=Артикул, B=Комментарий,
+    # C=Кол-во (ближайшая поставка), D=Дата прихода, E=Количество в пути (новая колонка).
+    logger.info('[2/7] Читаю шаблон (A:E)...')
+    template_rows = worksheet_sample.get('A:E')
+    template_info: dict[str, tuple[str, str, str, str]] = {}
     template_vendors: list[str] = []
     seen: set[str] = set()
     for row in template_rows:
@@ -1183,6 +1184,7 @@ def update_week_sheet(db_conn: DbConnection):
         b = (row[1] if len(row) > 1 else '').replace('\t', ' ')
         c = row[2] if len(row) > 2 else ''
         d = row[3] if len(row) > 3 else ''
+        e = row[4] if len(row) > 4 else ''  # Количество в пути — новая колонка
         # Если комментарий пуст, но в Кол-во (C) и Дате прихода (D) что-то есть —
         # собираем комментарий из них в формате "<кол-во>    <dd.mm.yyyy>" (4 пробела).
         # Из C убираем пробелы и NBSP (разделители тысяч "2 000" → "2000"), иначе
@@ -1192,7 +1194,7 @@ def update_week_sheet(db_conn: DbConnection):
             d_text = d_parsed.strftime("%d.%m.%Y") if d_parsed else d.strip()
             c_clean = c.strip().replace(' ', '').replace('\xa0', '')
             b = f"{c_clean}    {d_text}"
-        template_info.setdefault(a, (b, c, d))
+        template_info.setdefault(a, (b, c, d, e))
         if a in vendors_map and a not in seen:
             template_vendors.append(a)
             seen.add(a)
@@ -1265,7 +1267,7 @@ def update_week_sheet(db_conn: DbConnection):
         info = template_info.get(vendor)
         if not info:
             return ('', '', '')
-        comment, qty_str, date_str = info
+        comment, qty_str, date_str = info[0], info[1], info[2]  # info[3] = E (транзит), не трогаем
         qty, delivery_date = _nearest_supply(comment, qty_str, date_str, today)
         if delivery_date is None:
             return (comment, '', '')
@@ -1456,13 +1458,14 @@ def update_week_sheet(db_conn: DbConnection):
         block_stock_now[main_vendor] = int(to_today_fbo.get(main_vendor, 0)
                                            + to_today_fbs.get(main_vendor, 0)
                                            + to_today_priy.get(main_vendor, 0))
-        # В пути: берём Шаблон!C по мейну (строка template_info[main_vendor][1]).
+        # В пути: берём Шаблон!E по мейну (info[3]). Колонка C (info[1]) используется
+        # для Ближайшей поставки — не трогаем.
         transit_qty = 0
         info = template_info.get(main_vendor)
         if info:
-            raw = (info[1] or '').strip().replace(' ', '').replace('\xa0', '')
+            raw = str(info[3] or '').strip().replace(' ', '').replace('\xa0', '')
             try:
-                transit_qty = int(raw)
+                transit_qty = int(float(raw)) if raw else 0
             except ValueError:
                 transit_qty = 0
         block_transit_qty[main_vendor] = transit_qty
@@ -1564,10 +1567,12 @@ def update_week_sheet(db_conn: DbConnection):
 
     def transit_formula(row_idx: int) -> str:
         """В пути (G): кол-во товаров в пути из Шаблона по мейн-артикулу.
-        СУММЕСЛИ по A (артикул), возвращает значение из C. Для дублей (C в Шаблоне
-        обычно пустой) и мейнов без заказа возвращает 0."""
+        СУММЕСЛИ по A (артикул), возвращает значение из E (отдельная колонка
+        "Количество в пути"). Колонка C (Кол-во) используется для Ближайшей поставки
+        и в этот расчёт не входит. Для дублей (E обычно пустой у них) и мейнов без
+        заказа возвращает 0."""
         r = row_idx
-        return f"=СУММЕСЛИ('Шаблон'!A:A;B{r};'Шаблон'!C:C)"
+        return f"=СУММЕСЛИ('Шаблон'!A:A;B{r};'Шаблон'!E:E)"
 
     def stock_value_formula(row_idx: int) -> str:
         """Капитал в работе (S):
